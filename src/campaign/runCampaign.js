@@ -20,7 +20,7 @@ export async function runCampaign(campaign, runtimeConfig, options = {}) {
     };
   });
 
-  const db = openDatabase(runtimeConfig.dbPath);
+  const db = await openDatabase(runtimeConfig.dbPath);
   try {
     saveCampaignRun(db, campaign, prospects);
     const rows = getCampaignResults(db, campaign.id);

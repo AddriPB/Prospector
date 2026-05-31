@@ -1,17 +1,33 @@
-import Database from "better-sqlite3";
-import { ensureDir, resolveProjectPath } from "../config.js";
+import fs from "node:fs";
 import path from "node:path";
+import initSqlJs from "sql.js";
+import { ensureDir, resolveProjectPath } from "../config.js";
 
-export function openDatabase(dbPath) {
+export async function openDatabase(dbPath) {
   ensureDir(path.dirname(dbPath));
-  const db = new Database(resolveProjectPath(dbPath));
-  db.pragma("journal_mode = WAL");
+  const absolutePath = resolveProjectPath(dbPath);
+  const SQL = await initSqlJs();
+  const db = fs.existsSync(absolutePath)
+    ? new SQL.Database(fs.readFileSync(absolutePath))
+    : new SQL.Database();
+
   migrate(db);
-  return db;
+
+  return {
+    db,
+    path: absolutePath,
+    persist() {
+      fs.writeFileSync(absolutePath, Buffer.from(db.export()));
+    },
+    close() {
+      this.persist();
+      db.close();
+    }
+  };
 }
 
 export function migrate(db) {
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS campaigns (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -70,29 +86,32 @@ export function migrate(db) {
   `);
 }
 
-export function saveCampaignRun(db, campaign, prospects) {
+export function saveCampaignRun(connection, campaign, prospects) {
+  const { db } = connection;
   const now = new Date().toISOString();
-  const tx = db.transaction(() => {
-    db.prepare(
+
+  db.run("BEGIN TRANSACTION");
+  try {
+    run(
+      db,
       `INSERT INTO campaigns (id, name, business_type, target_count, created_at, last_run_at)
-       VALUES (@id, @name, @businessType, @targetCount, @now, @now)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         business_type = excluded.business_type,
         target_count = excluded.target_count,
-        last_run_at = excluded.last_run_at`
-    ).run({ ...campaign, now });
+        last_run_at = excluded.last_run_at`,
+      [campaign.id, campaign.name, campaign.businessType, campaign.targetCount, now, now]
+    );
 
     for (const prospect of prospects) {
-      const result = db.prepare(
+      run(
+        db,
         `INSERT INTO prospects (
           dedupe_key, name, address, city, lat, lon, website, phone, email,
           social_json, sources_json, raw_json, updated_at
         )
-        VALUES (
-          @dedupeKey, @name, @address, @city, @lat, @lon, @website, @phone, @email,
-          @socialJson, @sourcesJson, @rawJson, @now
-        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(dedupe_key) DO UPDATE SET
           name = excluded.name,
           address = COALESCE(excluded.address, prospects.address),
@@ -105,76 +124,129 @@ export function saveCampaignRun(db, campaign, prospects) {
           social_json = excluded.social_json,
           sources_json = excluded.sources_json,
           raw_json = excluded.raw_json,
-          updated_at = excluded.updated_at
-        RETURNING id`
-      ).get({
-        ...prospect,
-        socialJson: JSON.stringify(prospect.social || []),
-        sourcesJson: JSON.stringify(prospect.sources || [prospect.source]),
-        rawJson: JSON.stringify(prospect.raw || {}),
-        now
-      });
+          updated_at = excluded.updated_at`,
+        [
+          prospect.dedupeKey,
+          prospect.name,
+          prospect.address,
+          prospect.city,
+          prospect.lat,
+          prospect.lon,
+          prospect.website,
+          prospect.phone,
+          prospect.email,
+          JSON.stringify(prospect.social || []),
+          JSON.stringify(prospect.sources || [prospect.source]),
+          JSON.stringify(prospect.raw || {}),
+          now
+        ]
+      );
 
-      const prospectId = result.id;
-      db.prepare(
+      const prospectId = get(db, "SELECT id FROM prospects WHERE dedupe_key = ?", [
+        prospect.dedupeKey
+      ]).id;
+
+      run(
+        db,
         `INSERT INTO campaign_prospects (
           campaign_id, prospect_id, score, score_reasons_json, message, first_seen_at, last_seen_at
         )
-        VALUES (@campaignId, @prospectId, @score, @reasons, @message, @now, @now)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(campaign_id, prospect_id) DO UPDATE SET
           score = excluded.score,
           score_reasons_json = excluded.score_reasons_json,
           message = excluded.message,
-          last_seen_at = excluded.last_seen_at`
-      ).run({
-        campaignId: campaign.id,
-        prospectId,
-        score: prospect.score,
-        reasons: JSON.stringify(prospect.scoreReasons || []),
-        message: prospect.message,
-        now
-      });
+          last_seen_at = excluded.last_seen_at`,
+        [
+          campaign.id,
+          prospectId,
+          prospect.score,
+          JSON.stringify(prospect.scoreReasons || []),
+          prospect.message,
+          now,
+          now
+        ]
+      );
 
       for (const evidence of prospect.evidence || []) {
-        db.prepare(
+        run(
+          db,
           `INSERT OR IGNORE INTO evidences (prospect_id, source, text, created_at)
-           VALUES (?, ?, ?, ?)`
-        ).run(prospectId, prospect.source || "merged", evidence, now);
+           VALUES (?, ?, ?, ?)`,
+          [prospectId, prospect.source || "merged", evidence, now]
+        );
       }
 
       for (const contact of prospectContacts(prospect)) {
-        db.prepare(
+        run(
+          db,
           `INSERT OR IGNORE INTO contacts (prospect_id, type, value, source, created_at)
-           VALUES (?, ?, ?, ?, ?)`
-        ).run(prospectId, contact.type, contact.value, prospect.source || "merged", now);
+           VALUES (?, ?, ?, ?, ?)`,
+          [prospectId, contact.type, contact.value, prospect.source || "merged", now]
+        );
       }
     }
-  });
-  tx();
+
+    db.run("COMMIT");
+    connection.persist();
+  } catch (error) {
+    db.run("ROLLBACK");
+    throw error;
+  }
 }
 
-export function getCampaignResults(db, campaignId) {
-  return db
-    .prepare(
-      `SELECT
-        p.*,
-        cp.score,
-        cp.score_reasons_json,
-        cp.message,
-        cp.first_seen_at,
-        cp.last_seen_at
-      FROM campaign_prospects cp
-      JOIN prospects p ON p.id = cp.prospect_id
-      WHERE cp.campaign_id = ?
-      ORDER BY cp.score DESC, p.name ASC`
-    )
-    .all(campaignId)
-    .map((row) => ({
-      ...row,
-      social: JSON.parse(row.social_json || "[]"),
-      sources: JSON.parse(row.sources_json || "[]"),
-      scoreReasons: JSON.parse(row.score_reasons_json || "[]")
-    }));
+export function getCampaignResults(connection, campaignId) {
+  return all(
+    connection.db,
+    `SELECT
+      p.*,
+      cp.score,
+      cp.score_reasons_json,
+      cp.message,
+      cp.first_seen_at,
+      cp.last_seen_at
+    FROM campaign_prospects cp
+    JOIN prospects p ON p.id = cp.prospect_id
+    WHERE cp.campaign_id = ?
+    ORDER BY cp.score DESC, p.name ASC`,
+    [campaignId]
+  ).map((row) => ({
+    ...row,
+    social: JSON.parse(row.social_json || "[]"),
+    sources: JSON.parse(row.sources_json || "[]"),
+    scoreReasons: JSON.parse(row.score_reasons_json || "[]")
+  }));
+}
+
+function run(db, sql, params = []) {
+  const stmt = db.prepare(sql);
+  try {
+    stmt.run(params);
+  } finally {
+    stmt.free();
+  }
+}
+
+function get(db, sql, params = []) {
+  const stmt = db.prepare(sql);
+  try {
+    stmt.bind(params);
+    return stmt.step() ? stmt.getAsObject() : null;
+  } finally {
+    stmt.free();
+  }
+}
+
+function all(db, sql, params = []) {
+  const stmt = db.prepare(sql);
+  const rows = [];
+  try {
+    stmt.bind(params);
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    return rows;
+  } finally {
+    stmt.free();
+  }
 }
 
 function prospectContacts(prospect) {

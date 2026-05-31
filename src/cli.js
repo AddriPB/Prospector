@@ -33,7 +33,7 @@ async function main() {
   }
 
   if (scope === "export") {
-    const db = openDatabase(runtimeConfig.dbPath);
+    const db = await openDatabase(runtimeConfig.dbPath);
     try {
       const rows = getCampaignResults(db, campaign.id);
       const exportPaths = exportCampaign(campaign, rows, runtimeConfig.exportDir);
