@@ -1,0 +1,25 @@
+{
+  "name": "prospector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot local de prospection qualifiee avec scoring, preuves et exports.",
+  "main": "src/index.js",
+  "bin": {
+    "prospector": "src/cli.js"
+  },
+  "scripts": {
+    "campaign:run": "node src/cli.js campaign run",
+    "campaign:nightly": "node src/cli.js campaign nightly",
+    "export": "node src/cli.js export",
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.6",
+    "dotenv": "^17.2.3"
+  }
+}

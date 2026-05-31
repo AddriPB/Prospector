@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Garage exemple",
+    "url": "https://www.pagesjaunes.fr/pros/00000000",
+    "address": "1 rue Exemple, 93310 Le Pre-Saint-Gervais",
+    "city": "Le Pré-Saint-Gervais",
+    "phone": "0102030405",
+    "website": "https://www.example-garage.fr",
+    "notes": "Exemple de fiche importee manuellement. Copier ce fichier vers pagesjaunes-seeds.local.json pour l'utiliser."
+  }
+]

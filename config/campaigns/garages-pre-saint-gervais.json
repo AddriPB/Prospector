@@ -1,0 +1,33 @@
+{
+  "id": "campaign-001-garages-pre-saint-gervais",
+  "name": "Campagne 001 - Garages automobiles autour du Pre-Saint-Gervais",
+  "businessType": "garages automobiles",
+  "targetCount": 50,
+  "center": {
+    "lat": 48.8847,
+    "lon": 2.4046
+  },
+  "radiusMeters": 9000,
+  "cities": [
+    "Le Pré-Saint-Gervais",
+    "Pantin",
+    "Les Lilas",
+    "Romainville",
+    "Bagnolet",
+    "Montreuil",
+    "Paris 19",
+    "Paris 20",
+    "Noisy-le-Sec",
+    "Bobigny"
+  ],
+  "localAngle": "Je suis base pres de chez vous et j'aide des commerces locaux a avoir un site simple, propre et utile.",
+  "sources": {
+    "overpass": {
+      "enabled": true
+    },
+    "pagesJaunesAssisted": {
+      "enabled": true,
+      "seedFile": "config/pagesjaunes-seeds.local.json"
+    }
+  }
+}

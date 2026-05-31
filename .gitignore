@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Runtime data
+data/
+logs/
+exports/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local cache/output
+.cache/
+.tmp/
+tmp/
+.local-prospector-output/
+.local-prospector-cache/
+
+# Private imports/exports
+*.xlsx
+
+# Local-only project context
+CODEX_PROJECT_CONTEXT.md
+
+# System
+.DS_Store
