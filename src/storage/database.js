@@ -218,6 +218,60 @@ export function getCampaignResults(connection, campaignId) {
   }));
 }
 
+export function getDashboardState(connection, campaignId) {
+  const prospects = getCampaignResults(connection, campaignId);
+  const campaign = get(
+    connection.db,
+    `SELECT id, name, business_type, target_count, last_run_at
+     FROM campaigns
+     WHERE id = ?`,
+    [campaignId]
+  );
+  const newByDay = all(
+    connection.db,
+    `SELECT substr(first_seen_at, 1, 10) AS day, COUNT(*) AS count
+     FROM campaign_prospects
+     WHERE campaign_id = ?
+     GROUP BY day
+     ORDER BY day DESC
+     LIMIT 14`,
+    [campaignId]
+  );
+  const today = new Date().toISOString().slice(0, 10);
+  const newToday = Number(newByDay.find((row) => row.day === today)?.count || 0);
+
+  return {
+    campaign: campaign || null,
+    summary: {
+      totalProspects: prospects.length,
+      newToday,
+      targetCount: Number(campaign?.target_count || 0),
+      latestRunAt: campaign?.last_run_at || null
+    },
+    newByDay,
+    prospects: prospects.map(toDashboardProspect)
+  };
+}
+
+function toDashboardProspect(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    city: row.city,
+    address: row.address,
+    score: row.score,
+    website: row.website,
+    phone: row.phone,
+    email: row.email,
+    social: row.social,
+    sources: row.sources,
+    scoreReasons: row.scoreReasons,
+    message: row.message,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at
+  };
+}
+
 function run(db, sql, params = []) {
   const stmt = db.prepare(sql);
   try {

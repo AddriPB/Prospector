@@ -11,6 +11,10 @@
   "scripts": {
     "campaign:run": "node src/cli.js campaign run",
     "campaign:nightly": "node src/cli.js campaign nightly",
+    "dev": "vite --host 0.0.0.0",
+    "server": "node src/index.js",
+    "build": "vite build",
+    "preview": "vite preview",
     "export": "node src/cli.js export",
     "start": "node src/index.js",
     "test": "node --test"
@@ -20,6 +24,13 @@
   },
   "dependencies": {
     "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "^8.0.14"
   }
 }

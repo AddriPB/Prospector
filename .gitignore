@@ -1,6 +1,10 @@
 # Dependencies
 node_modules/
 
+# Build outputs
+dist/
+build/
+
 # Runtime data
 data/
 logs/

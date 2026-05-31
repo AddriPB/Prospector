@@ -35,6 +35,12 @@ export function getRuntimeConfig() {
       "https://overpass-api.de/api/interpreter",
     nightlyHour: Number(process.env.PROSPECTOR_NIGHTLY_HOUR || 2),
     nightlyMinute: Number(process.env.PROSPECTOR_NIGHTLY_MINUTE || 30),
-    timezone: process.env.PROSPECTOR_TIMEZONE || "Europe/Paris"
+    timezone: process.env.PROSPECTOR_TIMEZONE || "Europe/Paris",
+    host: process.env.PROSPECTOR_HOST || "0.0.0.0",
+    port: Number(process.env.PROSPECTOR_PORT || 4174),
+    corsOrigins: (process.env.PROSPECTOR_CORS_ORIGINS || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
   };
 }
