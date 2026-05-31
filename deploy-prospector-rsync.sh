@@ -27,18 +27,18 @@ rsync -az --delete \
   --exclude '.git/' \
   --exclude '.DS_Store' \
   --exclude 'CODEX_PROJECT_CONTEXT.md' \
-  --exclude 'node_modules/' \
-  --exclude 'dist/' \
-  --exclude 'build/' \
-  --exclude 'coverage/' \
-  --exclude '.cache/' \
-  --exclude '.tmp/' \
-  --exclude 'tmp/' \
-  --exclude 'logs/' \
-  --exclude 'data/' \
-  --exclude 'exports/' \
-  --exclude '.local-prospector-output/' \
-  --exclude '.local-prospector-cache/' \
+  --exclude '/node_modules/' \
+  --exclude '/dist/' \
+  --exclude '/build/' \
+  --exclude '/coverage/' \
+  --exclude '/.cache/' \
+  --exclude '/.tmp/' \
+  --exclude '/tmp/' \
+  --exclude '/logs/' \
+  --exclude '/data/' \
+  --exclude '/exports/' \
+  --exclude '/.local-prospector-output/' \
+  --exclude '/.local-prospector-cache/' \
   --exclude '*.log' \
   --exclude '*.sqlite' \
   --exclude '*.db' \
