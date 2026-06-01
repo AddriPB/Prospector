@@ -23,6 +23,7 @@ export async function runCampaign(campaign, runtimeConfig, options = {}) {
     return {
       ...prospect,
       score: scoreResult.score,
+      scoreBreakdown: scoreResult.scoreBreakdown,
       scoreReasons: scoreResult.reasons,
       qualificationState: computeQualificationState(prospect, { score: scoreResult.score }),
       message: buildContactMessage(prospect, campaign, scoreResult)

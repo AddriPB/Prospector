@@ -18,6 +18,12 @@ export function exportCampaign(campaign, rows, exportDir) {
 export function toCsv(rows) {
   const headers = [
     "score",
+    "besoin_web",
+    "potentiel_commercial",
+    "actionnabilite",
+    "besoin_web_reasons",
+    "potentiel_commercial_reasons",
+    "actionnabilite_reasons",
     "name",
     "city",
     "address",
@@ -55,8 +61,14 @@ export function toMarkdown(campaign, rows) {
     "",
     ...topRows.map((row, index) =>
       [
-        `### ${index + 1}. ${row.name} - ${row.score}/100`,
+        `### ${index + 1}. ${row.name} - Score : ${row.score}/100`,
         "",
+        `- Besoin web: ${scorePart(row, "webNeed").score}/${scorePart(row, "webNeed").max}`,
+        `  - Raisons: ${scoreReasons(row, "webNeed") || "n/a"}`,
+        `- Potentiel commercial: ${scorePart(row, "commercialPotential").score}/${scorePart(row, "commercialPotential").max}`,
+        `  - Raisons: ${scoreReasons(row, "commercialPotential") || "n/a"}`,
+        `- Actionnabilite: ${scorePart(row, "actionability").score}/${scorePart(row, "actionability").max}`,
+        `  - Raisons: ${scoreReasons(row, "actionability") || "n/a"}`,
         `- Ville: ${row.city || "a confirmer"}`,
         `- Adresse: ${row.address || "a confirmer"}`,
         `- Site: ${row.website || "non identifie"}`,
@@ -81,6 +93,24 @@ export function toMarkdown(campaign, rows) {
 }
 
 function cellValue(row, header) {
+  if (header === "score") return `${row.score}/100`;
+  if (header === "besoin_web") {
+    const part = scorePart(row, "webNeed");
+    return `${part.score}/${part.max}`;
+  }
+  if (header === "potentiel_commercial") {
+    const part = scorePart(row, "commercialPotential");
+    return `${part.score}/${part.max}`;
+  }
+  if (header === "actionnabilite") {
+    const part = scorePart(row, "actionability");
+    return `${part.score}/${part.max}`;
+  }
+  if (header === "besoin_web_reasons") return scoreReasons(row, "webNeed");
+  if (header === "potentiel_commercial_reasons") {
+    return scoreReasons(row, "commercialPotential");
+  }
+  if (header === "actionnabilite_reasons") return scoreReasons(row, "actionability");
   if (header === "social") return (row.social || []).join(" | ");
   if (header === "sources") return (row.sources || []).join(" | ");
   if (header === "source_url") return row.source_url || row.sourceUrl || "";
@@ -90,6 +120,23 @@ function cellValue(row, header) {
   if (header === "score_reasons") return (row.scoreReasons || []).join(" | ");
   if (header === "message") return row.message || "";
   return row[header] ?? "";
+}
+
+function scorePart(row, key) {
+  const defaults = {
+    webNeed: { score: 0, max: 35 },
+    commercialPotential: { score: 0, max: 25 },
+    actionability: { score: 0, max: 25 }
+  };
+  const part = row.scoreBreakdown?.[key] || defaults[key];
+  return {
+    score: Math.max(0, Math.min(part.max || defaults[key].max, Number(part.score) || 0)),
+    max: part.max || defaults[key].max
+  };
+}
+
+function scoreReasons(row, key) {
+  return (row.scoreBreakdown?.[key]?.reasons || []).join(" | ");
 }
 
 function csvCell(value) {

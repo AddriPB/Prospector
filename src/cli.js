@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { DEFAULT_CAMPAIGN_PATH, getRuntimeConfig, loadJsonFile } from "./config.js";
 import { runCampaign } from "./campaign/runCampaign.js";
+import { loadConfiguredCampaigns } from "./campaign/configuredCampaigns.js";
+import { recalculateScoringV2 } from "./migrations/recalculateScoringV2.js";
 import { openDatabase, getCampaignResults } from "./storage/database.js";
 import { exportCampaign } from "./exports/exportCampaign.js";
 import { startNightlyWorker } from "./scheduler/nightly.js";
@@ -45,6 +47,20 @@ async function main() {
     return;
   }
 
+  if (scope === "scoring" && command === "recalculate-v2") {
+    const db = await openDatabase(runtimeConfig.dbPath);
+    try {
+      const stats = recalculateScoringV2(db, loadConfiguredCampaigns(campaign));
+      console.log(`Prospects traites: ${stats.processed}`);
+      console.log(`Mis a jour: ${stats.updated}`);
+      console.log(`Ignores: ${stats.ignored}`);
+      console.log(`Erreurs: ${stats.errors}`);
+    } finally {
+      db.close();
+    }
+    return;
+  }
+
   printHelp();
 }
 
@@ -60,5 +76,6 @@ Commandes:
   prospector campaign run [--campaign path]
   prospector campaign nightly [--campaign path]
   prospector export [--campaign path]
+  prospector scoring recalculate-v2 [--campaign path]
 `);
 }

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { COMMERCIAL_SCRIPT_FIELDS } from "./commercialScripts.js";
 import { OUTREACH_STATUSES } from "./outreachStatus.js";
+import { REJECTION_REASONS } from "./rejectionReasons.js";
 import { sectorOptions } from "./sectors.js";
 
 const SESSION_TOKEN_KEY = "prospector_session_token";
@@ -31,11 +33,17 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState("priority");
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [pageIndex, setPageIndex] = useState(0);
+  const [activeTab, setActiveTab] = useState("prospects");
+  const [scriptSectorId, setScriptSectorId] = useState("");
+  const [scriptDraft, setScriptDraft] = useState(null);
+  const [scriptSaving, setScriptSaving] = useState(false);
 
   const api = useMemo(() => createApi(DEFAULT_API_BASE), []);
   const prospects = prospectsPage.items || [];
   const sectors = dashboard?.filters?.sectors || sectorOptions();
   const outreachStatuses = dashboard?.filters?.outreachStatuses || OUTREACH_STATUSES;
+  const rejectionReasons = dashboard?.filters?.rejectionReasons || REJECTION_REASONS;
+  const commercialScripts = dashboard?.commercialScripts || [];
   const totalProspects = prospectsPage.total || 0;
   const pageCount = Math.max(1, Math.ceil(totalProspects / pageSize));
   const pageStart = totalProspects ? prospectsPage.offset + 1 : 0;
@@ -64,6 +72,15 @@ export default function App() {
     if (!authenticated) return;
     loadProspects();
   }, [authenticated, sectorFilter, outreachStatusFilter, sortOrder, pageSize, pageIndex]);
+
+  useEffect(() => {
+    if (!commercialScripts.length) return;
+    const current =
+      commercialScripts.find((script) => script.sectorId === scriptSectorId) ||
+      commercialScripts[0];
+    setScriptSectorId(current.sectorId);
+    setScriptDraft(current);
+  }, [commercialScripts, scriptSectorId]);
 
   async function login(event) {
     event.preventDefault();
@@ -182,22 +199,35 @@ export default function App() {
   }
 
   async function updateOutreachStatus(prospectId, outreachStatus) {
-    const previousStatus = prospects.find((prospect) => prospect.id === prospectId)?.outreachStatus;
-    setProspectsPage((current) => updateProspectPageStatus(current, prospectId, outreachStatus));
-    setProspectsCache((current) => updateProspectsCacheStatus(current, prospectId, outreachStatus));
+    const prospect = prospects.find((item) => item.id === prospectId);
+    const previousStatus = prospect?.outreachStatus;
+    const previousReason = prospect?.rejectionReason || "";
+    const rejectionReason = outreachStatus === "Décliné" ? previousReason : "";
+    if (outreachStatus === "Décliné" && !rejectionReason) {
+      setMessage("Choisis un motif de rejet avant de passer le prospect en decline.");
+      return;
+    }
+    setProspectsPage((current) =>
+      updateProspectPageStatus(current, prospectId, outreachStatus, rejectionReason)
+    );
+    setProspectsCache((current) =>
+      updateProspectsCacheStatus(current, prospectId, outreachStatus, rejectionReason)
+    );
     setStatusSaving((current) => ({ ...current, [prospectId]: true }));
     setMessage("");
 
     try {
       await api(`/api/prospects/${prospectId}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ outreachStatus })
+        body: JSON.stringify({ outreachStatus, rejectionReason })
       });
     } catch (error) {
       if (previousStatus) {
-        setProspectsPage((current) => updateProspectPageStatus(current, prospectId, previousStatus));
+        setProspectsPage((current) =>
+          updateProspectPageStatus(current, prospectId, previousStatus, previousReason)
+        );
         setProspectsCache((current) =>
-          updateProspectsCacheStatus(current, prospectId, previousStatus)
+          updateProspectsCacheStatus(current, prospectId, previousStatus, previousReason)
         );
       }
       setMessage(apiErrorMessage(error, "Impossible de modifier l'etat."));
@@ -207,6 +237,64 @@ export default function App() {
         delete next[prospectId];
         return next;
       });
+    }
+  }
+
+  async function updateRejectionReason(prospectId, rejectionReason) {
+    const prospect = prospects.find((item) => item.id === prospectId);
+    const previousReason = prospect?.rejectionReason || "";
+    setProspectsPage((current) =>
+      updateProspectPageRejectionReason(current, prospectId, rejectionReason)
+    );
+    setProspectsCache((current) =>
+      updateProspectsCacheRejectionReason(current, prospectId, rejectionReason)
+    );
+    setStatusSaving((current) => ({ ...current, [prospectId]: true }));
+    setMessage("");
+
+    try {
+      await api(`/api/prospects/${prospectId}/rejection-reason`, {
+        method: "PATCH",
+        body: JSON.stringify({ rejectionReason })
+      });
+    } catch (error) {
+      setProspectsPage((current) =>
+        updateProspectPageRejectionReason(current, prospectId, previousReason)
+      );
+      setProspectsCache((current) =>
+        updateProspectsCacheRejectionReason(current, prospectId, previousReason)
+      );
+      setMessage(apiErrorMessage(error, "Impossible de modifier le motif de rejet."));
+    } finally {
+      setStatusSaving((current) => {
+        const next = { ...current };
+        delete next[prospectId];
+        return next;
+      });
+    }
+  }
+
+  async function saveCommercialScript() {
+    if (!scriptDraft?.sectorId) return;
+    setScriptSaving(true);
+    setMessage("");
+    try {
+      const data = await api(`/api/commercial-scripts/${scriptDraft.sectorId}`, {
+        method: "PATCH",
+        body: JSON.stringify(scriptDraft)
+      });
+      setDashboard((current) => ({
+        ...current,
+        commercialScripts: (current?.commercialScripts || []).map((script) =>
+          script.sectorId === data.script.sectorId ? data.script : script
+        )
+      }));
+      setScriptDraft(data.script);
+      setMessage("Script commercial enregistre.");
+    } catch (error) {
+      setMessage(apiErrorMessage(error, "Impossible d'enregistrer le script commercial."));
+    } finally {
+      setScriptSaving(false);
     }
   }
 
@@ -269,25 +357,127 @@ export default function App() {
 
       {message ? <p className="message">{message}</p> : null}
 
-      <section className="metrics">
-        <Metric label="Prospects en BDD" value={dashboard?.summary?.totalProspects ?? "-"} />
-        <Metric label="Nouveaux aujourd'hui" value={dashboard?.summary?.newToday ?? "-"} />
-      </section>
+      <nav className="tabs" aria-label="Navigation dashboard">
+        <button
+          className={activeTab === "prospects" ? "tab active" : "tab"}
+          type="button"
+          onClick={() => setActiveTab("prospects")}
+        >
+          Prospects
+        </button>
+        <button
+          className={activeTab === "stats" ? "tab active" : "tab"}
+          type="button"
+          onClick={() => setActiveTab("stats")}
+        >
+          Statistiques
+        </button>
+        <button
+          className={activeTab === "scripts" ? "tab active" : "tab"}
+          type="button"
+          onClick={() => setActiveTab("scripts")}
+        >
+          Script commercial
+        </button>
+      </nav>
 
-      <section className="content-grid">
-        <article className="panel">
-          <h2>Nouveaux prospects par jour</h2>
-          <div className="daily-list">
-            {(dashboard?.newByDay || []).map((row) => (
-              <div className="daily-row" key={row.day}>
-                <span>{row.day}</span>
-                <strong>{row.count}</strong>
-              </div>
-            ))}
-            {!dashboard?.newByDay?.length ? <p className="muted">Aucun historique.</p> : null}
+      {activeTab === "stats" ? (
+        <section className="stats-view">
+          <section className="metrics">
+            <Metric label="Prospects en BDD" value={dashboard?.summary?.totalProspects ?? "-"} />
+            <Metric label="Nouveaux aujourd'hui" value={dashboard?.summary?.newToday ?? "-"} />
+          </section>
+          <article className="panel">
+            <h2>Nouveaux prospects par jour</h2>
+            <div className="daily-list">
+              {(dashboard?.newByDay || []).map((row) => (
+                <div className="daily-row" key={row.day}>
+                  <span>{formatDateOnly(row.day)}</span>
+                  <strong>{row.count}</strong>
+                </div>
+              ))}
+              {!dashboard?.newByDay?.length ? <p className="muted">Aucun historique.</p> : null}
+            </div>
+          </article>
+          <article className="panel">
+            <h2>Segmentation par commune</h2>
+            <div className="table-wrap">
+              <table className="stats-table">
+                <thead>
+                  <tr>
+                    <th>Commune</th>
+                    <th>Prospects</th>
+                    <th>Score moyen</th>
+                    <th>Contactables</th>
+                    <th>Sans site</th>
+                    <th>Rejetes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(dashboard?.citySegments || []).map((row) => (
+                    <tr key={row.city}>
+                      <td>{row.city}</td>
+                      <td>{row.prospects}</td>
+                      <td>{formatNumber(row.averageScore)}</td>
+                      <td>{row.contactable}</td>
+                      <td>{row.withoutSite}</td>
+                      <td>{row.rejected}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!dashboard?.citySegments?.length ? <p className="muted empty">Aucune commune.</p> : null}
+            </div>
+          </article>
+        </section>
+      ) : activeTab === "scripts" ? (
+        <article className="panel script-panel">
+          <div className="section-header">
+            <h2>Script commercial</h2>
+            <button type="button" onClick={saveCommercialScript} disabled={scriptSaving || !scriptDraft}>
+              Enregistrer
+            </button>
           </div>
+          <label className="script-sector">
+            Secteur
+            <select
+              value={scriptSectorId}
+              onChange={(event) => {
+                const next = commercialScripts.find((script) => script.sectorId === event.target.value);
+                setScriptSectorId(event.target.value);
+                setScriptDraft(next || null);
+              }}
+            >
+              {commercialScripts.map((script) => (
+                <option key={script.sectorId} value={script.sectorId}>
+                  {script.sectorLabel}
+                </option>
+              ))}
+            </select>
+          </label>
+          {scriptDraft ? (
+            <div className="script-grid">
+              {COMMERCIAL_SCRIPT_FIELDS.map((field) => (
+                <label key={field.key}>
+                  {field.label}
+                  <textarea
+                    value={scriptDraft[field.key] || ""}
+                    onChange={(event) =>
+                      setScriptDraft((current) => ({
+                        ...current,
+                        [field.key]: event.target.value
+                      }))
+                    }
+                    rows={3}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">Aucun script disponible.</p>
+          )}
         </article>
-
+      ) : (
         <article className="panel prospects-panel">
           <div className="section-header">
             <h2>Prospects et contacts</h2>
@@ -360,17 +550,23 @@ export default function App() {
               <thead>
                 <tr>
                   <th>Score</th>
+                  <th>Sous-scores</th>
                   <th>Secteur</th>
                   <th>Prospect</th>
                   <th>Contacts</th>
                   <th>Site</th>
+                  <th>Doublon</th>
                   <th>Etat</th>
+                  <th>Motif rejet</th>
                 </tr>
               </thead>
               <tbody>
                 {prospects.map((prospect) => (
                   <tr key={prospect.id}>
-                    <td className="score">{prospect.score}</td>
+                    <td className="score">Score : {prospect.score}/100</td>
+                    <td>
+                      <ScoreBreakdown breakdown={prospect.scoreBreakdown} />
+                    </td>
                     <td>{sectorLabel(prospect.sector, sectors)}</td>
                     <td className="prospect-cell">
                       <strong>{prospect.name}</strong>
@@ -394,6 +590,13 @@ export default function App() {
                       )}
                     </td>
                     <td>
+                      {prospect.duplicateSuspected ? (
+                        <span className="duplicate-flag">Suspect #{prospect.duplicateOf}</span>
+                      ) : (
+                        <span className="muted">-</span>
+                      )}
+                    </td>
+                    <td>
                       <select
                         className="status-select"
                         value={prospect.outreachStatus || "A contacter"}
@@ -405,6 +608,23 @@ export default function App() {
                         {outreachStatuses.map((status) => (
                           <option key={status} value={status}>
                             {status}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <select
+                        className="status-select"
+                        value={prospect.rejectionReason || ""}
+                        disabled={Boolean(statusSaving[prospect.id])}
+                        onChange={(event) =>
+                          updateRejectionReason(prospect.id, event.target.value)
+                        }
+                      >
+                        <option value="">Aucun</option>
+                        {rejectionReasons.map((reason) => (
+                          <option key={reason.id} value={reason.id}>
+                            {reason.label}
                           </option>
                         ))}
                       </select>
@@ -422,7 +642,7 @@ export default function App() {
             onPageChange={setPageIndex}
           />
         </article>
-      </section>
+      )}
     </main>
   );
 }
@@ -478,6 +698,31 @@ function PaginationControls({ pageIndex, pageCount, loading, onPageChange }) {
   );
 }
 
+function ScoreBreakdown({ breakdown }) {
+  const items = [
+    ["Besoin web", scorePart(breakdown, "webNeed", 35)],
+    ["Potentiel commercial", scorePart(breakdown, "commercialPotential", 25)],
+    ["Actionnabilite", scorePart(breakdown, "actionability", 25)]
+  ];
+  return (
+    <ul className="score-breakdown">
+      {items.map(([label, part]) => (
+        <li key={label}>
+          <span>{label} :</span>
+          <strong>
+            {part.score}/{part.max}
+          </strong>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function scorePart(breakdown, key, max) {
+  const score = Math.max(0, Math.min(max, Number(breakdown?.[key]?.score) || 0));
+  return { score, max: breakdown?.[key]?.max || max };
+}
+
 function ContactList({ prospect }) {
   const contacts = [
     prospect.email ? { label: "Email", value: prospect.email, href: `mailto:${prospect.email}` } : null,
@@ -500,21 +745,40 @@ function ContactList({ prospect }) {
   );
 }
 
-function updateProspectPageStatus(page, prospectId, outreachStatus) {
+function updateProspectPageStatus(page, prospectId, outreachStatus, rejectionReason = "") {
   if (!page) return page;
   return {
     ...page,
     items: (page.items || []).map((prospect) =>
-      prospect.id === prospectId ? { ...prospect, outreachStatus } : prospect
+      prospect.id === prospectId ? { ...prospect, outreachStatus, rejectionReason } : prospect
     )
   };
 }
 
-function updateProspectsCacheStatus(cache, prospectId, outreachStatus) {
+function updateProspectsCacheStatus(cache, prospectId, outreachStatus, rejectionReason = "") {
   return Object.fromEntries(
     Object.entries(cache).map(([key, page]) => [
       key,
-      updateProspectPageStatus(page, prospectId, outreachStatus)
+      updateProspectPageStatus(page, prospectId, outreachStatus, rejectionReason)
+    ])
+  );
+}
+
+function updateProspectPageRejectionReason(page, prospectId, rejectionReason) {
+  if (!page) return page;
+  return {
+    ...page,
+    items: (page.items || []).map((prospect) =>
+      prospect.id === prospectId ? { ...prospect, rejectionReason } : prospect
+    )
+  };
+}
+
+function updateProspectsCacheRejectionReason(cache, prospectId, rejectionReason) {
+  return Object.fromEntries(
+    Object.entries(cache).map(([key, page]) => [
+      key,
+      updateProspectPageRejectionReason(page, prospectId, rejectionReason)
     ])
   );
 }
@@ -595,6 +859,19 @@ function formatDate(value) {
     dateStyle: "short",
     timeStyle: "short"
   }).format(new Date(value));
+}
+
+function formatDateOnly(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(new Date(`${value}T00:00:00`));
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(Number(value) || 0);
 }
 
 function loginErrorMessage(error) {

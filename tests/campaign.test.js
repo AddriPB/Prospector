@@ -4,11 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runCampaign } from "../src/campaign/runCampaign.js";
+import { recalculateScoringV2 } from "../src/migrations/recalculateScoringV2.js";
 import { normalizeSourceRecord } from "../src/normalize/prospect.js";
 import {
   getDashboardState,
   getProspectPage,
   openDatabase,
+  updateCommercialScript,
   updateProspectOutreachStatus
 } from "../src/storage/database.js";
 
@@ -36,6 +38,14 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
       city: "Pantin",
       phone: "0102030405",
       evidence: ["shop=car_repair", "Fiche fixture"]
+    }),
+    normalizeSourceRecord({
+      source: "fixture-alt",
+      sourceId: "2",
+      name: "Garage Auto Pantin",
+      city: "Pantin",
+      phone: "01 02 03 04 05",
+      evidence: ["shop=car_repair", "Fiche doublon"]
     })
   ];
 
@@ -57,10 +67,81 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
     assert.equal(prospectsPage.total, 1);
     assert.equal(prospectsPage.items[0].sector, "automotive");
     assert.equal(prospectsPage.items[0].outreachStatus, "A contacter");
+    assert.equal(dashboard.citySegments[0].city, "Pantin");
+    assert.equal(dashboard.citySegments[0].prospects, 1);
+    assert.equal(dashboard.citySegments[0].contactable, 1);
+    assert.equal(dashboard.commercialScripts.length >= 6, true);
 
-    updateProspectOutreachStatus(db, prospectsPage.items[0].id, "Contacté");
+    assert.throws(
+      () => updateProspectOutreachStatus(db, prospectsPage.items[0].id, "Décliné"),
+      /invalid_rejection_reason/
+    );
+    updateProspectOutreachStatus(db, prospectsPage.items[0].id, "Décliné", "doublon");
     const updatedProspectsPage = getProspectPage(db, { campaignId: campaign.id });
-    assert.equal(updatedProspectsPage.items[0].outreachStatus, "Contacté");
+    assert.equal(updatedProspectsPage.items[0].outreachStatus, "Décliné");
+    assert.equal(updatedProspectsPage.items[0].rejectionReason, "doublon");
+
+    const script = updateCommercialScript(db, "restaurant", {
+      smsHook: "Nouvelle accroche"
+    });
+    assert.equal(script.smsHook, "Nouvelle accroche");
+
+    const beforeScore = updatedProspectsPage.items[0].score;
+    const stats = recalculateScoringV2(db, [campaign]);
+    const rescoredPage = getProspectPage(db, { campaignId: campaign.id });
+    assert.equal(stats.processed, 1);
+    assert.equal(stats.updated, 1);
+    assert.equal(rescoredPage.items[0].score > 0, true);
+    assert.equal(typeof beforeScore, "number");
+  } finally {
+    db.close();
+  }
+});
+
+test("signale les doublons persistants sans supprimer de prospect", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-duplicates-"));
+  const runtimeConfig = {
+    dbPath: path.join(tmp, "prospector.sqlite"),
+    exportDir: path.join(tmp, "exports"),
+    cacheDir: path.join(tmp, "cache")
+  };
+  const campaign = {
+    id: "duplicate-campaign",
+    name: "Duplicate Campaign",
+    businessType: "garages automobiles",
+    targetCount: 50,
+    cities: ["Pantin"],
+    localAngle: "Angle local.",
+    sources: {}
+  };
+
+  await runCampaign(campaign, runtimeConfig, {
+    fixtureRecords: [
+      normalizeSourceRecord({
+        source: "fixture",
+        sourceId: "1",
+        name: "Garage Nord",
+        city: "Pantin",
+        sourceUrl: "https://annuaire.example/garage-nord",
+        evidence: ["shop=car_repair"]
+      }),
+      normalizeSourceRecord({
+        source: "manual",
+        sourceId: "2",
+        name: "Garage Nord SARL",
+        city: "Pantin",
+        sourceUrl: "https://annuaire.example/garage-nord",
+        evidence: ["garage"]
+      })
+    ]
+  });
+
+  const db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const page = getProspectPage(db, { campaignId: campaign.id, sort: "name" });
+    assert.equal(page.total, 2);
+    assert.equal(page.items.filter((prospect) => prospect.duplicateSuspected).length, 1);
+    assert.equal(Boolean(page.items.find((prospect) => prospect.duplicateSuspected).duplicateOf), true);
   } finally {
     db.close();
   }

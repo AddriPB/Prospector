@@ -51,6 +51,7 @@ ssh "$PI_HOST" "
   cd '$PI_DIR'
   npm install
   npm run build --if-present
+  npm run scoring:recalculate-v2
   if pm2 describe '$PROCESS_NAME' >/dev/null 2>&1; then
     pm2 restart '$PROCESS_NAME' --update-env
   else

@@ -20,6 +20,11 @@ test("score haut pour garage local sans site avec contact", () => {
   );
 
   assert.equal(result.score >= 80, true);
+  assert.equal(result.score <= 100, true);
+  assert.equal(result.scoreBreakdown.webNeed.max, 35);
+  assert.equal(result.scoreBreakdown.commercialPotential.max, 25);
+  assert.equal(result.scoreBreakdown.actionability.max, 25);
+  assert.equal(result.scoreBreakdown.webNeed.score <= 35, true);
   assert.equal(result.reasons.some((reason) => reason.includes("Aucun site")), true);
 });
 

@@ -16,6 +16,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "export": "node src/cli.js export",
+    "scoring:recalculate-v2": "node src/cli.js scoring recalculate-v2",
     "start": "node src/index.js",
     "test": "node --test"
   },

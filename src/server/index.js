@@ -7,14 +7,18 @@ import {
   openDatabase,
   getDashboardState,
   getProspectPage,
-  updateProspectOutreachStatus
+  updateCommercialScript,
+  updateProspectOutreachStatus,
+  updateProspectRejectionReason
 } from "../storage/database.js";
 import { OUTREACH_STATUSES } from "../outreachStatus.js";
+import { REJECTION_REASONS } from "../rejectionReasons.js";
 import { loginHandler, logoutHandler, meHandler, requireAuth } from "./auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const OUTREACH_STATUS_SET = new Set(OUTREACH_STATUSES);
+const REJECTION_REASON_SET = new Set(REJECTION_REASONS.map((reason) => reason.id));
 
 export async function startServer(campaign, runtimeConfig) {
   const app = express();
@@ -107,18 +111,63 @@ export async function startServer(campaign, runtimeConfig) {
   app.patch("/api/prospects/:id/status", requireAuth, async (req, res, next) => {
     const prospectId = Number(req.params.id);
     const outreachStatus = String(req.body?.outreachStatus || "");
+    const rejectionReason = req.body?.rejectionReason ? String(req.body.rejectionReason) : "";
     if (!Number.isInteger(prospectId) || prospectId <= 0) {
       return res.status(400).json({ error: "invalid_prospect_id" });
     }
     if (!OUTREACH_STATUS_SET.has(outreachStatus)) {
       return res.status(400).json({ error: "invalid_outreach_status" });
     }
+    if (outreachStatus === "Décliné" && !REJECTION_REASON_SET.has(rejectionReason)) {
+      return res.status(400).json({ error: "rejection_reason_required" });
+    }
 
     try {
       const db = await openDatabase(runtimeConfig.dbPath);
       try {
-        updateProspectOutreachStatus(db, prospectId, outreachStatus);
-        res.json({ ok: true, outreachStatus });
+        updateProspectOutreachStatus(db, prospectId, outreachStatus, rejectionReason);
+        res.json({
+          ok: true,
+          outreachStatus,
+          rejectionReason: outreachStatus === "Décliné" ? rejectionReason : ""
+        });
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/prospects/:id/rejection-reason", requireAuth, async (req, res, next) => {
+    const prospectId = Number(req.params.id);
+    const rejectionReason = String(req.body?.rejectionReason || "");
+    if (!Number.isInteger(prospectId) || prospectId <= 0) {
+      return res.status(400).json({ error: "invalid_prospect_id" });
+    }
+    if (!REJECTION_REASON_SET.has(rejectionReason)) {
+      return res.status(400).json({ error: "invalid_rejection_reason" });
+    }
+
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        updateProspectRejectionReason(db, prospectId, rejectionReason);
+        res.json({ ok: true, rejectionReason });
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/commercial-scripts/:sectorId", requireAuth, async (req, res, next) => {
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        const script = updateCommercialScript(db, String(req.params.sectorId || ""), req.body || {});
+        res.json({ ok: true, script });
       } finally {
         db.close();
       }
