@@ -8,7 +8,7 @@ build/
 # Runtime data
 data/
 logs/
-exports/
+/exports/
 *.log
 *.sqlite
 *.sqlite-shm
