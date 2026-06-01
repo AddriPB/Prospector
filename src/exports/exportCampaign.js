@@ -26,6 +26,10 @@ export function toCsv(rows) {
     "email",
     "social",
     "sources",
+    "source_url",
+    "confidence",
+    "contactability",
+    "qualification_state",
     "score_reasons",
     "message"
   ];
@@ -59,6 +63,10 @@ export function toMarkdown(campaign, rows) {
         `- Telephone: ${row.phone || "non identifie"}`,
         `- Email: ${row.email || "non identifie"}`,
         `- Sources: ${(row.sources || []).join(", ") || "n/a"}`,
+        `- Source URL: ${row.source_url || row.sourceUrl || "n/a"}`,
+        `- Confiance: ${row.confidence || "low"}`,
+        `- Contactabilite: ${row.contactability || "none"}`,
+        `- Qualification: ${row.qualification_state || row.qualificationState || "discovered"}`,
         `- Raisons: ${(row.scoreReasons || []).join(" ")}`,
         "",
         "Message propose:",
@@ -75,6 +83,10 @@ export function toMarkdown(campaign, rows) {
 function cellValue(row, header) {
   if (header === "social") return (row.social || []).join(" | ");
   if (header === "sources") return (row.sources || []).join(" | ");
+  if (header === "source_url") return row.source_url || row.sourceUrl || "";
+  if (header === "qualification_state") {
+    return row.qualification_state || row.qualificationState || "";
+  }
   if (header === "score_reasons") return (row.scoreReasons || []).join(" | ");
   if (header === "message") return row.message || "";
   return row[header] ?? "";

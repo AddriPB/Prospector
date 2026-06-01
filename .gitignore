@@ -31,6 +31,7 @@ tmp/
 
 # Private imports/exports
 *.xlsx
+config/*.local.json
 
 # Local-only project context
 CODEX_PROJECT_CONTEXT.md

@@ -50,6 +50,12 @@ export function migrate(db) {
       email TEXT,
       social_json TEXT NOT NULL DEFAULT '[]',
       sources_json TEXT NOT NULL DEFAULT '[]',
+      source_records_json TEXT NOT NULL DEFAULT '[]',
+      source_url TEXT,
+      collected_at TEXT,
+      confidence TEXT NOT NULL DEFAULT 'low',
+      contactability TEXT NOT NULL DEFAULT 'none',
+      qualification_state TEXT NOT NULL DEFAULT 'discovered',
       raw_json TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL
     );
@@ -84,6 +90,18 @@ export function migrate(db) {
       UNIQUE (prospect_id, type, value)
     );
   `);
+
+  addColumnIfMissing(db, "prospects", "source_records_json", "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing(db, "prospects", "source_url", "TEXT");
+  addColumnIfMissing(db, "prospects", "collected_at", "TEXT");
+  addColumnIfMissing(db, "prospects", "confidence", "TEXT NOT NULL DEFAULT 'low'");
+  addColumnIfMissing(db, "prospects", "contactability", "TEXT NOT NULL DEFAULT 'none'");
+  addColumnIfMissing(
+    db,
+    "prospects",
+    "qualification_state",
+    "TEXT NOT NULL DEFAULT 'discovered'"
+  );
 }
 
 export function saveCampaignRun(connection, campaign, prospects) {
@@ -109,9 +127,10 @@ export function saveCampaignRun(connection, campaign, prospects) {
         db,
         `INSERT INTO prospects (
           dedupe_key, name, address, city, lat, lon, website, phone, email,
-          social_json, sources_json, raw_json, updated_at
+          social_json, sources_json, source_records_json, source_url, collected_at,
+          confidence, contactability, qualification_state, raw_json, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(dedupe_key) DO UPDATE SET
           name = excluded.name,
           address = COALESCE(excluded.address, prospects.address),
@@ -123,6 +142,12 @@ export function saveCampaignRun(connection, campaign, prospects) {
           email = COALESCE(NULLIF(excluded.email, ''), prospects.email),
           social_json = excluded.social_json,
           sources_json = excluded.sources_json,
+          source_records_json = excluded.source_records_json,
+          source_url = COALESCE(NULLIF(excluded.source_url, ''), prospects.source_url),
+          collected_at = COALESCE(prospects.collected_at, excluded.collected_at),
+          confidence = excluded.confidence,
+          contactability = excluded.contactability,
+          qualification_state = excluded.qualification_state,
           raw_json = excluded.raw_json,
           updated_at = excluded.updated_at`,
         [
@@ -137,6 +162,12 @@ export function saveCampaignRun(connection, campaign, prospects) {
           prospect.email,
           JSON.stringify(prospect.social || []),
           JSON.stringify(prospect.sources || [prospect.source]),
+          JSON.stringify(prospect.sourceRecords || []),
+          prospect.sourceUrl,
+          prospect.collectedAt,
+          prospect.confidence || "low",
+          prospect.contactability || "none",
+          prospect.qualificationState || "discovered",
           JSON.stringify(prospect.raw || {}),
           now
         ]
@@ -214,6 +245,7 @@ export function getCampaignResults(connection, campaignId) {
     ...row,
     social: JSON.parse(row.social_json || "[]"),
     sources: JSON.parse(row.sources_json || "[]"),
+    sourceRecords: JSON.parse(row.source_records_json || "[]"),
     scoreReasons: JSON.parse(row.score_reasons_json || "[]")
   }));
 }
@@ -265,6 +297,12 @@ function toDashboardProspect(row) {
     email: row.email,
     social: row.social,
     sources: row.sources,
+    sourceRecords: row.sourceRecords,
+    sourceUrl: row.source_url,
+    collectedAt: row.collected_at,
+    confidence: row.confidence,
+    contactability: row.contactability,
+    qualificationState: row.qualification_state,
     scoreReasons: row.scoreReasons,
     message: row.message,
     firstSeenAt: row.first_seen_at,
@@ -301,6 +339,12 @@ function all(db, sql, params = []) {
   } finally {
     stmt.free();
   }
+}
+
+function addColumnIfMissing(db, table, column, definition) {
+  const columns = all(db, `PRAGMA table_info(${table})`);
+  if (columns.some((row) => row.name === column)) return;
+  db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function prospectContacts(prospect) {

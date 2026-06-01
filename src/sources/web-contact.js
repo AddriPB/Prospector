@@ -6,18 +6,39 @@ const PHONE_RE = /(?:(?:\+33|0)\s?[1-9](?:[\s.-]?\d{2}){4})/g;
 const SOCIAL_RE =
   /https?:\/\/(?:www\.)?(?:facebook|instagram|linkedin)\.com\/[^\s"'<>]+/gi;
 
-export async function enrichWithWebsiteContacts(records, { timeoutMs = 8000 } = {}) {
+export async function enrichWithWebsiteContacts(
+  records,
+  { timeoutMs = 3000, limit = 10 } = {}
+) {
   const enriched = [];
+  let enrichedWebsiteCount = 0;
+
   for (const record of records) {
     if (!record.website) {
       enriched.push(record);
       continue;
     }
+    if (enrichedWebsiteCount >= limit) {
+      enriched.push(record);
+      continue;
+    }
+
+    enrichedWebsiteCount += 1;
     try {
       const extracted = await extractPublicContacts(record.website, timeoutMs);
       enriched.push(
         normalizeSourceRecord({
           ...record,
+          sources: [...(record.sources || [record.source]), "web"],
+          sourceRecords: [
+            ...(record.sourceRecords || []),
+            {
+              source: "web",
+              sourceId: record.website,
+              sourceUrl: record.website,
+              collectedAt: new Date().toISOString()
+            }
+          ],
           email: record.email || extracted.emails[0],
           phone: record.phone || extracted.phones[0],
           social: [...(record.social || []), ...extracted.social],

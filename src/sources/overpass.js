@@ -5,10 +5,11 @@ import { normalizeSourceRecord } from "../normalize/prospect.js";
 import { stableHash } from "../utils/hash.js";
 
 const OVERPASS_TAG_QUERY = `
+[out:json][timeout:45];
 (
   nwr["shop"~"^(car|car_repair|tyres)$"](around:{{radius}},{{lat}},{{lon}});
   nwr["craft"~"^(car_repair|mechanic)$"](around:{{radius}},{{lat}},{{lon}});
-  nwr["amenity"~"^(car_wash|charging_station)$"](around:{{radius}},{{lat}},{{lon}});
+  nwr["amenity"="car_wash"](around:{{radius}},{{lat}},{{lon}});
 );
 out center tags;
 `;
@@ -35,19 +36,7 @@ export async function collectOverpass(campaign, runtimeConfig) {
       .replaceAll("{{lat}}", String(campaign.center.lat))
       .replaceAll("{{lon}}", String(campaign.center.lon));
 
-    const response = await fetch(runtimeConfig.overpassEndpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        "user-agent": "Prospector/0.1 local qualified prospecting"
-      },
-      body: new URLSearchParams({ data: query })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Overpass HTTP ${response.status}: ${await response.text()}`);
-    }
-    payload = await response.json();
+    payload = await fetchOverpass(query, runtimeConfig);
     fs.writeFileSync(cachePath, JSON.stringify(payload, null, 2));
   }
 
@@ -79,6 +68,51 @@ export async function collectOverpass(campaign, runtimeConfig) {
       ].filter(Boolean)
     })
   );
+}
+
+collectOverpass.sourceName = "overpass";
+
+async function fetchOverpass(query, runtimeConfig) {
+  const endpoints = [
+    ...(runtimeConfig.overpassEndpoints || []),
+    runtimeConfig.overpassEndpoint,
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter"
+  ].filter(Boolean);
+
+  const uniqueEndpoints = [...new Set(endpoints)];
+  const errors = [];
+
+  for (const endpoint of uniqueEndpoints) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), runtimeConfig.overpassTimeoutMs);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "user-agent": "Prospector/0.1 local qualified prospecting"
+        },
+        body: new URLSearchParams({ data: query })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      return response.json();
+    } catch (error) {
+      errors.push(`${endpoint} -> ${compactError(error.message)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error(`Overpass indisponible (${errors.join(" | ")})`);
+}
+
+function compactError(message) {
+  return String(message).replace(/\s+/g, " ").slice(0, 500);
 }
 
 function buildAddress(tags = {}) {

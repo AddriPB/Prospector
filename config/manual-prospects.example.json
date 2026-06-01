@@ -1,0 +1,15 @@
+[
+  {
+    "name": "Garage manuel exemple",
+    "url": "https://maps.google.com/?cid=0000000000000000000",
+    "address": "2 rue Exemple, 93500 Pantin",
+    "city": "Pantin",
+    "phone": "01 02 03 04 05",
+    "email": "contact@garage-manuel.example",
+    "website": "https://www.garage-manuel.example",
+    "social": [
+      "https://www.instagram.com/garage_manuel_exemple"
+    ],
+    "notes": "Exemple de prospect ajoute apres verification manuelle. Copier ce fichier vers manual-prospects.local.json pour l'utiliser."
+  }
+]

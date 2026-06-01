@@ -37,6 +37,7 @@ rsync -az --delete \
   --exclude '/logs/' \
   --exclude '/data/' \
   --exclude '/exports/' \
+  --exclude '/config/*.local.json' \
   --exclude '/.local-prospector-output/' \
   --exclude '/.local-prospector-cache/' \
   --exclude '*.log' \

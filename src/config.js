@@ -33,6 +33,15 @@ export function getRuntimeConfig() {
     overpassEndpoint:
       process.env.PROSPECTOR_OVERPASS_ENDPOINT ||
       "https://overpass-api.de/api/interpreter",
+    overpassEndpoints: (process.env.PROSPECTOR_OVERPASS_ENDPOINTS || "")
+      .split(",")
+      .map((endpoint) => endpoint.trim())
+      .filter(Boolean),
+    overpassTimeoutMs: Number(process.env.PROSPECTOR_OVERPASS_TIMEOUT_MS || 15000),
+    websiteEnrichmentLimit: Number(process.env.PROSPECTOR_WEBSITE_ENRICHMENT_LIMIT || 10),
+    websiteEnrichmentTimeoutMs: Number(
+      process.env.PROSPECTOR_WEBSITE_ENRICHMENT_TIMEOUT_MS || 3000
+    ),
     nightlyHour: Number(process.env.PROSPECTOR_NIGHTLY_HOUR || 2),
     nightlyMinute: Number(process.env.PROSPECTOR_NIGHTLY_MINUTE || 30),
     timezone: process.env.PROSPECTOR_TIMEZONE || "Europe/Paris",

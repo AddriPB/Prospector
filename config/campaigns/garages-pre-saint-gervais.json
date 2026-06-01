@@ -28,6 +28,10 @@
     "pagesJaunesAssisted": {
       "enabled": true,
       "seedFile": "config/pagesjaunes-seeds.local.json"
+    },
+    "manual": {
+      "enabled": true,
+      "seedFile": "config/manual-prospects.local.json"
     }
   }
 }

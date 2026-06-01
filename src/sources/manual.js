@@ -1,8 +1,8 @@
 import { loadJsonFile } from "../config.js";
 import { normalizeSourceRecord } from "../normalize/prospect.js";
 
-export async function collectPagesJaunesAssisted(campaign) {
-  const options = campaign.sources?.pagesJaunesAssisted;
+export async function collectManualProspects(campaign) {
+  const options = campaign.sources?.manual;
   if (!options?.enabled || !options.seedFile) return [];
 
   const seeds = loadJsonFile(options.seedFile, { optional: true });
@@ -10,8 +10,8 @@ export async function collectPagesJaunesAssisted(campaign) {
 
   return asArray(seeds).map((seed, index) =>
     normalizeSourceRecord({
-      source: "pagesjaunes-assisted",
-      sourceId: seed.url || `${campaign.id}:pagesjaunes:${index}`,
+      source: "manual",
+      sourceId: seed.url || seed.website || `${campaign.id}:manual:${index}`,
       sourceUrl: seed.url,
       name: seed.name,
       address: seed.address,
@@ -22,16 +22,15 @@ export async function collectPagesJaunesAssisted(campaign) {
       social: seed.social || [],
       raw: seed,
       evidence: [
-        seed.url ? `Fiche PagesJaunes fournie: ${seed.url}` : null,
-        seed.name ? `Nom fourni depuis PagesJaunes: ${seed.name}` : null,
-        seed.phone || seed.email || seed.website ? "Contact public fourni depuis PagesJaunes" : null,
-        seed.notes || null
+        seed.url ? `Source manuelle: ${seed.url}` : "Source manuelle locale",
+        seed.notes || null,
+        seed.phone || seed.email || seed.website ? "Contact fourni manuellement" : null
       ].filter(Boolean)
     })
   );
 }
 
-collectPagesJaunesAssisted.sourceName = "pagesjaunes-assisted";
+collectManualProspects.sourceName = "manual";
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];

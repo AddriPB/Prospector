@@ -53,7 +53,8 @@ export async function startServer(campaign, runtimeConfig) {
       res.json({
         ok: true,
         collected: result.collected,
-        qualified: result.qualified
+        qualified: result.qualified,
+        collectionErrors: result.collectionErrors
       });
     } catch (error) {
       next(error);

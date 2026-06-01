@@ -85,7 +85,12 @@ export default function App() {
     setMessage("");
     try {
       const result = await api("/api/campaign/run", { method: "POST" });
-      setMessage(`Collecte terminee : ${result.qualified} prospects qualifies.`);
+      const warnings = result.collectionErrors?.length
+        ? ` Sources ignorees : ${result.collectionErrors
+            .map((error) => error.source)
+            .join(", ")}.`
+        : "";
+      setMessage(`Collecte terminee : ${result.qualified} prospects qualifies.${warnings}`);
       await loadDashboard();
     } catch (error) {
       setMessage(apiErrorMessage(error, "Impossible de lancer la collecte."));

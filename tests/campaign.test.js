@@ -36,6 +36,9 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
   const result = await runCampaign(campaign, runtimeConfig, { fixtureRecords });
 
   assert.equal(result.qualified, 1);
+  assert.equal(result.rows[0].confidence, "high");
+  assert.equal(result.rows[0].contactability, "good");
+  assert.equal(result.rows[0].qualification_state, "priority");
   assert.equal(fs.existsSync(result.exportPaths.csvPath), true);
   assert.equal(fs.existsSync(result.exportPaths.markdownPath), true);
 });

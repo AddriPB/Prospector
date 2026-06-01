@@ -5,7 +5,11 @@
     "address": "1 rue Exemple, 93310 Le Pre-Saint-Gervais",
     "city": "Le Pré-Saint-Gervais",
     "phone": "0102030405",
+    "email": "contact@example-garage.fr",
     "website": "https://www.example-garage.fr",
+    "social": [
+      "https://www.facebook.com/garage-exemple"
+    ],
     "notes": "Exemple de fiche importee manuellement. Copier ce fichier vers pagesjaunes-seeds.local.json pour l'utiliser."
   }
 ]
