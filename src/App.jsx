@@ -32,6 +32,19 @@ export default function App() {
   });
   const [prospectsLoading, setProspectsLoading] = useState(false);
   const [prospectsCache, setProspectsCache] = useState({});
+  const [followUpPage, setFollowUpPage] = useState({
+    items: [],
+    total: 0,
+    limit: DEFAULT_PAGE_SIZE,
+    offset: 0
+  });
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpCache, setFollowUpCache] = useState({});
+  const [followUpStatusFilter, setFollowUpStatusFilter] = useState("all");
+  const [followUpPageSize, setFollowUpPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [followUpPageIndex, setFollowUpPageIndex] = useState(0);
+  const [followUpSaving, setFollowUpSaving] = useState({});
+  const [showFollowUpNotes, setShowFollowUpNotes] = useState(true);
   const [runLoading, setRunLoading] = useState(false);
   const [statusSaving, setStatusSaving] = useState({});
   const [sectorFilter, setSectorFilter] = useState("all");
@@ -46,6 +59,7 @@ export default function App() {
 
   const api = useMemo(() => createApi(DEFAULT_API_BASE), []);
   const prospects = prospectsPage.items || [];
+  const followUpProspects = followUpPage.items || [];
   const sectors = dashboard?.filters?.sectors || sectorOptions();
   const outreachStatuses = dashboard?.filters?.outreachStatuses || OUTREACH_STATUSES;
   const rejectionReasons = dashboard?.filters?.rejectionReasons || REJECTION_REASONS;
@@ -54,6 +68,13 @@ export default function App() {
   const pageCount = Math.max(1, Math.ceil(totalProspects / pageSize));
   const pageStart = totalProspects ? prospectsPage.offset + 1 : 0;
   const pageEnd = Math.min(prospectsPage.offset + prospects.length, totalProspects);
+  const totalFollowUpProspects = followUpPage.total || 0;
+  const followUpPageCount = Math.max(1, Math.ceil(totalFollowUpProspects / followUpPageSize));
+  const followUpPageStart = totalFollowUpProspects ? followUpPage.offset + 1 : 0;
+  const followUpPageEnd = Math.min(
+    followUpPage.offset + followUpProspects.length,
+    totalFollowUpProspects
+  );
 
   useEffect(() => {
     api("/api/auth/me")
@@ -75,9 +96,18 @@ export default function App() {
   }, [sectorFilter, outreachStatusFilter, sortOrder, pageSize]);
 
   useEffect(() => {
+    setFollowUpPageIndex(0);
+  }, [followUpStatusFilter, followUpPageSize]);
+
+  useEffect(() => {
     if (!authenticated) return;
     loadProspects();
   }, [authenticated, sectorFilter, outreachStatusFilter, sortOrder, pageSize, pageIndex]);
+
+  useEffect(() => {
+    if (!authenticated || activeTab !== "follow-up") return;
+    loadFollowUpProspects();
+  }, [authenticated, activeTab, followUpStatusFilter, followUpPageSize, followUpPageIndex]);
 
   useEffect(() => {
     if (!commercialScripts.length) return;
@@ -92,6 +122,11 @@ export default function App() {
     if (activeTab !== "scripts") return;
     document.querySelectorAll(".script-grid textarea").forEach(resizeTextarea);
   }, [activeTab, scriptDraft]);
+
+  useEffect(() => {
+    if (activeTab !== "follow-up") return;
+    document.querySelectorAll(".follow-up-notes").forEach(resizeTextarea);
+  }, [activeTab, followUpProspects, showFollowUpNotes]);
 
   async function login(event) {
     event.preventDefault();
@@ -124,6 +159,8 @@ export default function App() {
     setDashboard(null);
     setProspectsPage({ items: [], total: 0, limit: DEFAULT_PAGE_SIZE, offset: 0 });
     setProspectsCache({});
+    setFollowUpPage({ items: [], total: 0, limit: DEFAULT_PAGE_SIZE, offset: 0 });
+    setFollowUpCache({});
   }
 
   async function loadDashboard() {
@@ -181,10 +218,50 @@ export default function App() {
     }
   }
 
+  async function loadFollowUpProspects(options = {}) {
+    const requestedPageIndex = options.pageIndex ?? followUpPageIndex;
+    const offset = requestedPageIndex * followUpPageSize;
+    const params = new URLSearchParams({
+      outreachStatus: followUpStatusFilter,
+      limit: String(followUpPageSize),
+      offset: String(offset)
+    });
+    const cacheKey = params.toString();
+
+    if (!options.force && followUpCache[cacheKey]) {
+      setFollowUpPage(followUpCache[cacheKey]);
+      return;
+    }
+
+    setFollowUpLoading(true);
+    setMessage("");
+    try {
+      const page = await api(`/api/prospects/follow-up?${cacheKey}`);
+      setFollowUpPage(page);
+      setFollowUpCache((current) => ({ ...current, [cacheKey]: page }));
+      if (page.total > 0 && offset >= page.total && requestedPageIndex > 0) {
+        setFollowUpPageIndex(Math.max(0, Math.ceil(page.total / followUpPageSize) - 1));
+      }
+    } catch (error) {
+      if (error.status === 401) {
+        clearSessionToken();
+        setAuthenticated(false);
+        return;
+      }
+      setMessage(apiErrorMessage(error, "Impossible de charger le suivi."));
+    } finally {
+      setFollowUpLoading(false);
+    }
+  }
+
   async function refreshDashboard() {
     setProspectsCache({});
+    setFollowUpCache({});
     await loadDashboard();
     await loadProspects({ force: true });
+    if (activeTab === "follow-up") {
+      await loadFollowUpProspects({ force: true });
+    }
   }
 
   async function runCampaign() {
@@ -200,8 +277,13 @@ export default function App() {
       setMessage(`Collecte terminee : ${result.qualified} prospects qualifies.${warnings}`);
       await loadDashboard();
       setProspectsCache({});
+      setFollowUpCache({});
       setPageIndex(0);
       await loadProspects({ force: true, pageIndex: 0 });
+      if (activeTab === "follow-up") {
+        setFollowUpPageIndex(0);
+        await loadFollowUpProspects({ force: true, pageIndex: 0 });
+      }
     } catch (error) {
       setMessage(apiErrorMessage(error, "Impossible de lancer la collecte."));
     } finally {
@@ -210,7 +292,9 @@ export default function App() {
   }
 
   async function updateOutreachStatus(prospectId, outreachStatus) {
-    const prospect = prospects.find((item) => item.id === prospectId);
+    const prospect =
+      prospects.find((item) => item.id === prospectId) ||
+      followUpProspects.find((item) => item.id === prospectId);
     const previousStatus = prospect?.outreachStatus;
     const previousReason = prospect?.rejectionReason || "";
     const rejectionReason = outreachStatus === "Décliné" ? previousReason : "";
@@ -224,6 +308,12 @@ export default function App() {
     setProspectsCache((current) =>
       updateProspectsCacheStatus(current, prospectId, outreachStatus, rejectionReason)
     );
+    setFollowUpPage((current) =>
+      updateProspectPageStatus(current, prospectId, outreachStatus, rejectionReason)
+    );
+    setFollowUpCache((current) =>
+      updateProspectsCacheStatus(current, prospectId, outreachStatus, rejectionReason)
+    );
     setStatusSaving((current) => ({ ...current, [prospectId]: true }));
     setMessage("");
 
@@ -232,12 +322,22 @@ export default function App() {
         method: "PATCH",
         body: JSON.stringify({ outreachStatus, rejectionReason })
       });
+      setFollowUpCache({});
+      if (activeTab === "follow-up") {
+        await loadFollowUpProspects({ force: true });
+      }
     } catch (error) {
       if (previousStatus) {
         setProspectsPage((current) =>
           updateProspectPageStatus(current, prospectId, previousStatus, previousReason)
         );
         setProspectsCache((current) =>
+          updateProspectsCacheStatus(current, prospectId, previousStatus, previousReason)
+        );
+        setFollowUpPage((current) =>
+          updateProspectPageStatus(current, prospectId, previousStatus, previousReason)
+        );
+        setFollowUpCache((current) =>
           updateProspectsCacheStatus(current, prospectId, previousStatus, previousReason)
         );
       }
@@ -252,12 +352,20 @@ export default function App() {
   }
 
   async function updateRejectionReason(prospectId, rejectionReason) {
-    const prospect = prospects.find((item) => item.id === prospectId);
+    const prospect =
+      prospects.find((item) => item.id === prospectId) ||
+      followUpProspects.find((item) => item.id === prospectId);
     const previousReason = prospect?.rejectionReason || "";
     setProspectsPage((current) =>
       updateProspectPageRejectionReason(current, prospectId, rejectionReason)
     );
     setProspectsCache((current) =>
+      updateProspectsCacheRejectionReason(current, prospectId, rejectionReason)
+    );
+    setFollowUpPage((current) =>
+      updateProspectPageRejectionReason(current, prospectId, rejectionReason)
+    );
+    setFollowUpCache((current) =>
       updateProspectsCacheRejectionReason(current, prospectId, rejectionReason)
     );
     setStatusSaving((current) => ({ ...current, [prospectId]: true }));
@@ -275,9 +383,60 @@ export default function App() {
       setProspectsCache((current) =>
         updateProspectsCacheRejectionReason(current, prospectId, previousReason)
       );
+      setFollowUpPage((current) =>
+        updateProspectPageRejectionReason(current, prospectId, previousReason)
+      );
+      setFollowUpCache((current) =>
+        updateProspectsCacheRejectionReason(current, prospectId, previousReason)
+      );
       setMessage(apiErrorMessage(error, "Impossible de modifier le motif de rejet."));
     } finally {
       setStatusSaving((current) => {
+        const next = { ...current };
+        delete next[prospectId];
+        return next;
+      });
+    }
+  }
+
+  async function updateFollowUp(prospectId, updates) {
+    const prospect = followUpProspects.find((item) => item.id === prospectId);
+    const previous = prospect
+      ? {
+          lastContactedAt: prospect.lastContactedAt || "",
+          followUpNotes: prospect.followUpNotes || ""
+        }
+      : null;
+    setFollowUpPage((current) => updateProspectPageFollowUp(current, prospectId, updates));
+    setFollowUpCache((current) => updateProspectsCacheFollowUp(current, prospectId, updates));
+    setProspectsPage((current) => updateProspectPageFollowUp(current, prospectId, updates));
+    setProspectsCache((current) => updateProspectsCacheFollowUp(current, prospectId, updates));
+    setFollowUpSaving((current) => ({ ...current, [prospectId]: true }));
+    setMessage("");
+
+    try {
+      const data = await api(`/api/prospects/${prospectId}/follow-up`, {
+        method: "PATCH",
+        body: JSON.stringify(updates)
+      });
+      if (data.prospect) {
+        setFollowUpPage((current) =>
+          updateProspectPageFollowUp(current, prospectId, {
+            lastContactedAt: data.prospect.lastContactedAt || "",
+            followUpNotes: data.prospect.followUpNotes || ""
+          })
+        );
+      }
+    } catch (error) {
+      if (previous) {
+        setFollowUpPage((current) => updateProspectPageFollowUp(current, prospectId, previous));
+        setFollowUpCache((current) => updateProspectsCacheFollowUp(current, prospectId, previous));
+        setProspectsPage((current) => updateProspectPageFollowUp(current, prospectId, previous));
+        setProspectsCache((current) => updateProspectsCacheFollowUp(current, prospectId, previous));
+      }
+      setMessage(apiErrorMessage(error, "Impossible d'enregistrer le suivi."));
+    } finally {
+      setFollowUpSaving((current) => {
         const next = { ...current };
         delete next[prospectId];
         return next;
@@ -375,6 +534,13 @@ export default function App() {
           onClick={() => setActiveTab("prospects")}
         >
           Prospects
+        </button>
+        <button
+          className={activeTab === "follow-up" ? "tab active" : "tab"}
+          type="button"
+          onClick={() => setActiveTab("follow-up")}
+        >
+          Suivi
         </button>
         <button
           className={activeTab === "stats" ? "tab active" : "tab"}
@@ -549,6 +715,155 @@ export default function App() {
           ) : (
             <p className="muted">Aucun script disponible.</p>
           )}
+        </article>
+      ) : activeTab === "follow-up" ? (
+        <article className="panel prospects-panel follow-up-panel">
+          <div className="section-header">
+            <h2>Suivi commercial</h2>
+            <div className="section-meta">
+              {!showFollowUpNotes ? (
+                <button
+                  className="secondary table-toggle"
+                  type="button"
+                  onClick={() => setShowFollowUpNotes(true)}
+                >
+                  Afficher observations
+                </button>
+              ) : null}
+              <span>
+                {followUpPageStart}-{followUpPageEnd} / {totalFollowUpProspects} lignes
+              </span>
+            </div>
+          </div>
+          <div className="filters">
+            <label>
+              Etat commercial
+              <select
+                value={followUpStatusFilter}
+                onChange={(event) => setFollowUpStatusFilter(event.target.value)}
+              >
+                <option value="all">Tous les etats</option>
+                {outreachStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Lignes
+              <select
+                value={followUpPageSize}
+                onChange={(event) => setFollowUpPageSize(Number(event.target.value))}
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size} par page
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <PaginationControls
+            pageIndex={followUpPageIndex}
+            pageCount={followUpPageCount}
+            loading={followUpLoading}
+            onPageChange={setFollowUpPageIndex}
+          />
+          <div className="table-wrap follow-up-table-wrap">
+            <table className={showFollowUpNotes ? "follow-up-table" : "follow-up-table notes-hidden"}>
+              <thead>
+                <tr>
+                  <th>Entreprise</th>
+                  <th>Etat commercial</th>
+                  <th>Dernier contact</th>
+                  {showFollowUpNotes ? (
+                    <th>
+                      <span>Observations</span>
+                      <button
+                        className="secondary table-toggle"
+                        type="button"
+                        onClick={() => setShowFollowUpNotes(false)}
+                      >
+                        Masquer
+                      </button>
+                    </th>
+                  ) : null}
+                </tr>
+              </thead>
+              <tbody>
+                {followUpProspects.map((prospect) => (
+                  <tr key={prospect.id}>
+                    <td className="prospect-cell">
+                      <strong>{prospect.name}</strong>
+                      <ProspectAddressLink prospect={prospect} />
+                    </td>
+                    <td>
+                      <select
+                        className="status-select"
+                        value={prospect.outreachStatus || "A contacter"}
+                        disabled={Boolean(statusSaving[prospect.id])}
+                        onChange={(event) =>
+                          updateOutreachStatus(prospect.id, event.target.value)
+                        }
+                      >
+                        {outreachStatuses.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="date"
+                        value={prospect.lastContactedAt || ""}
+                        disabled={Boolean(followUpSaving[prospect.id])}
+                        onChange={(event) =>
+                          updateFollowUp(prospect.id, {
+                            lastContactedAt: event.target.value
+                          })
+                        }
+                      />
+                    </td>
+                    {showFollowUpNotes ? (
+                      <td>
+                        <textarea
+                          className="follow-up-notes"
+                          ref={resizeTextarea}
+                          value={prospect.followUpNotes || ""}
+                          disabled={Boolean(followUpSaving[prospect.id])}
+                          rows={1}
+                          onChange={(event) => {
+                            resizeTextarea(event.currentTarget);
+                            setFollowUpPage((current) =>
+                              updateProspectPageFollowUp(current, prospect.id, {
+                                followUpNotes: event.target.value
+                              })
+                            );
+                          }}
+                          onBlur={(event) =>
+                            updateFollowUp(prospect.id, {
+                              followUpNotes: event.target.value
+                            })
+                          }
+                        />
+                      </td>
+                    ) : null}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!followUpProspects.length ? (
+              <p className="muted empty">Aucun prospect en suivi.</p>
+            ) : null}
+          </div>
+          <PaginationControls
+            pageIndex={followUpPageIndex}
+            pageCount={followUpPageCount}
+            loading={followUpLoading}
+            onPageChange={setFollowUpPageIndex}
+          />
         </article>
       ) : (
         <article className="panel prospects-panel">
@@ -852,6 +1167,25 @@ function updateProspectsCacheRejectionReason(cache, prospectId, rejectionReason)
     Object.entries(cache).map(([key, page]) => [
       key,
       updateProspectPageRejectionReason(page, prospectId, rejectionReason)
+    ])
+  );
+}
+
+function updateProspectPageFollowUp(page, prospectId, updates) {
+  if (!page) return page;
+  return {
+    ...page,
+    items: (page.items || []).map((prospect) =>
+      prospect.id === prospectId ? { ...prospect, ...updates } : prospect
+    )
+  };
+}
+
+function updateProspectsCacheFollowUp(cache, prospectId, updates) {
+  return Object.fromEntries(
+    Object.entries(cache).map(([key, page]) => [
+      key,
+      updateProspectPageFollowUp(page, prospectId, updates)
     ])
   );
 }

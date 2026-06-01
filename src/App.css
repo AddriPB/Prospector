@@ -128,6 +128,14 @@ label {
   justify-content: flex-end;
 }
 
+.section-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: #5d6a61;
@@ -335,9 +343,67 @@ td:nth-child(9) {
 }
 
 th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
   color: #5d6a61;
   font-size: 0.78rem;
   text-transform: uppercase;
+}
+
+.follow-up-table {
+  min-width: 820px;
+}
+
+.follow-up-table th,
+.follow-up-table td {
+  width: auto;
+}
+
+.follow-up-table th:nth-child(1),
+.follow-up-table td:nth-child(1) {
+  width: 280px;
+}
+
+.follow-up-table th:nth-child(2),
+.follow-up-table td:nth-child(2) {
+  width: 190px;
+}
+
+.follow-up-table th:nth-child(3),
+.follow-up-table td:nth-child(3) {
+  width: 180px;
+}
+
+.follow-up-table th:nth-child(4),
+.follow-up-table td:nth-child(4) {
+  width: 45%;
+}
+
+.follow-up-table.notes-hidden {
+  min-width: 650px;
+}
+
+.follow-up-table th:last-child {
+  align-items: center;
+  gap: 8px;
+}
+
+.follow-up-table th:last-child span {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.table-toggle {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 0.82rem;
+}
+
+.follow-up-notes {
+  min-height: 42px;
+  line-height: 1.35;
 }
 
 td strong,

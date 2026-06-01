@@ -211,6 +211,8 @@ export function migrate(db) {
       qualification_state TEXT NOT NULL DEFAULT 'discovered',
       outreach_status TEXT NOT NULL DEFAULT 'A contacter',
       rejection_reason TEXT,
+      last_contacted_at TEXT,
+      follow_up_notes TEXT NOT NULL DEFAULT '',
       duplicate_suspected INTEGER NOT NULL DEFAULT 0,
       duplicate_of INTEGER,
       raw_json TEXT NOT NULL DEFAULT '{}',
@@ -297,6 +299,8 @@ export function migrate(db) {
     "TEXT NOT NULL DEFAULT 'A contacter'"
   );
   addColumnIfMissing(db, "prospects", "rejection_reason", "TEXT");
+  addColumnIfMissing(db, "prospects", "last_contacted_at", "TEXT");
+  addColumnIfMissing(db, "prospects", "follow_up_notes", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(
     db,
     "prospects",
@@ -334,6 +338,8 @@ export function migrate(db) {
       ON campaigns(sector);
     CREATE INDEX IF NOT EXISTS idx_prospects_outreach_status
       ON prospects(outreach_status);
+    CREATE INDEX IF NOT EXISTS idx_prospects_follow_up
+      ON prospects(outreach_status, last_contacted_at);
     CREATE INDEX IF NOT EXISTS idx_prospects_city
       ON prospects(city);
     CREATE INDEX IF NOT EXISTS idx_prospects_duplicate
@@ -695,6 +701,14 @@ export function getProspectPage(connection, options = {}) {
   };
 }
 
+export function getFollowUpProspectPage(connection, options = {}) {
+  return getProspectPage(connection, {
+    ...options,
+    contactedOnly: true,
+    sort: options.sort || "follow-up"
+  });
+}
+
 function getProspectCount(connection, options = {}) {
   const { whereSql, params } = buildProspectsWhere(options);
   const row = get(
@@ -707,6 +721,29 @@ function getProspectCount(connection, options = {}) {
     params
   );
   return Number(row?.count || 0);
+}
+
+function getProspectDashboardRow(connection, prospectId) {
+  return get(
+    connection.db,
+    `SELECT
+      c.id AS campaign_id,
+      c.sector AS campaign_sector,
+      p.*,
+      cp.score,
+      cp.score_breakdown_json,
+      cp.score_reasons_json,
+      cp.message,
+      cp.first_seen_at,
+      cp.last_seen_at
+    FROM prospects p
+    JOIN campaign_prospects cp ON cp.prospect_id = p.id
+    JOIN campaigns c ON c.id = cp.campaign_id
+    WHERE p.id = ?
+    ORDER BY cp.score DESC, cp.first_seen_at DESC
+    LIMIT 1`,
+    [prospectId]
+  );
 }
 
 export function updateProspectOutreachStatus(
@@ -747,6 +784,46 @@ export function updateProspectRejectionReason(connection, prospectId, rejectionR
     [normalizedReason || null, now, prospectId]
   );
   connection.persist();
+}
+
+export function updateProspectFollowUp(connection, prospectId, updates = {}) {
+  const current = get(connection.db, "SELECT id FROM prospects WHERE id = ?", [prospectId]);
+  if (!current) throw new Error("prospect_not_found");
+
+  const nextLastContactedAt =
+    updates.lastContactedAt === undefined
+      ? undefined
+      : normalizeLastContactedAt(updates.lastContactedAt);
+  const nextNotes =
+    updates.followUpNotes === undefined ? undefined : String(updates.followUpNotes || "");
+  const assignments = ["updated_at = ?"];
+  const params = [new Date().toISOString()];
+
+  if (nextLastContactedAt !== undefined) {
+    assignments.unshift("last_contacted_at = ?");
+    params.unshift(nextLastContactedAt);
+  }
+  if (nextNotes !== undefined) {
+    assignments.unshift("follow_up_notes = ?");
+    params.unshift(nextNotes);
+  }
+  if (assignments.length === 1) {
+    return toDashboardProspect(
+      hydrateDashboardRow(
+        getProspectDashboardRow(connection, prospectId)
+      )
+    );
+  }
+
+  run(
+    connection.db,
+    `UPDATE prospects
+     SET ${assignments.join(", ")}
+     WHERE id = ?`,
+    [...params, prospectId]
+  );
+  connection.persist();
+  return toDashboardProspect(hydrateDashboardRow(getProspectDashboardRow(connection, prospectId)));
 }
 
 export function updateCommercialScript(connection, sectorId, updates) {
@@ -829,6 +906,10 @@ function buildProspectsWhere(options = {}) {
     conditions.push("p.outreach_status = ?");
     params.push(options.outreachStatus);
   }
+  if (options.contactedOnly) {
+    conditions.push("p.outreach_status != ?");
+    params.push("A contacter");
+  }
 
   return {
     whereSql: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
@@ -864,6 +945,9 @@ function getCitySegments(connection, campaignId = null) {
 }
 
 function prospectOrderSql(sort = "priority") {
+  if (sort === "follow-up") {
+    return "ORDER BY COALESCE(p.last_contacted_at, '') DESC, cp.score DESC, p.name ASC";
+  }
   if (sort === "newest") {
     return "ORDER BY cp.first_seen_at DESC, cp.score DESC, p.name ASC";
   }
@@ -904,11 +988,34 @@ function toDashboardProspect(row) {
     qualificationState: row.qualification_state,
     outreachStatus: row.outreach_status || "A contacter",
     rejectionReason: row.rejection_reason || "",
+    lastContactedAt: row.last_contacted_at || "",
+    followUpNotes: row.follow_up_notes || "",
     scoreReasons: row.scoreReasons,
     message: row.message,
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at
   };
+}
+
+function hydrateDashboardRow(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    social: JSON.parse(row.social_json || "[]"),
+    sources: JSON.parse(row.sources_json || "[]"),
+    sourceRecords: JSON.parse(row.source_records_json || "[]"),
+    scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json, row.score),
+    scoreReasons: JSON.parse(row.score_reasons_json || "[]")
+  };
+}
+
+function normalizeLastContactedAt(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new Error("invalid_last_contacted_at");
+  }
+  return normalized;
 }
 
 function getCommercialScripts(connection) {

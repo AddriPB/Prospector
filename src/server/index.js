@@ -6,8 +6,10 @@ import { runCampaign } from "../campaign/runCampaign.js";
 import {
   openDatabase,
   getDashboardState,
+  getFollowUpProspectPage,
   getProspectPage,
   updateCommercialScript,
+  updateProspectFollowUp,
   updateProspectOutreachStatus,
   updateProspectRejectionReason
 } from "../storage/database.js";
@@ -69,6 +71,25 @@ export async function startServer(campaign, runtimeConfig) {
             sector: String(req.query.sector || "all"),
             outreachStatus: String(req.query.outreachStatus || "all"),
             sort: String(req.query.sort || "priority"),
+            limit: parseIntegerQuery(req.query.limit, 100),
+            offset: parseIntegerQuery(req.query.offset, 0)
+          })
+        );
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/prospects/follow-up", requireAuth, async (req, res, next) => {
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        res.json(
+          getFollowUpProspectPage(db, {
+            outreachStatus: String(req.query.outreachStatus || "all"),
             limit: parseIntegerQuery(req.query.limit, 100),
             offset: parseIntegerQuery(req.query.offset, 0)
           })
@@ -158,6 +179,34 @@ export async function startServer(campaign, runtimeConfig) {
         db.close();
       }
     } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/prospects/:id/follow-up", requireAuth, async (req, res, next) => {
+    const prospectId = Number(req.params.id);
+    if (!Number.isInteger(prospectId) || prospectId <= 0) {
+      return res.status(400).json({ error: "invalid_prospect_id" });
+    }
+
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        const prospect = updateProspectFollowUp(db, prospectId, {
+          lastContactedAt: req.body?.lastContactedAt,
+          followUpNotes: req.body?.followUpNotes
+        });
+        res.json({ ok: true, prospect });
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      if (error.message === "invalid_last_contacted_at") {
+        return res.status(400).json({ error: "invalid_last_contacted_at" });
+      }
+      if (error.message === "prospect_not_found") {
+        return res.status(404).json({ error: "prospect_not_found" });
+      }
       next(error);
     }
   });

@@ -11,9 +11,11 @@ import { OUTREACH_STATUSES } from "../src/outreachStatus.js";
 import { nextNightlyDelayMs } from "../src/scheduler/nightly.js";
 import {
   getDashboardState,
+  getFollowUpProspectPage,
   getProspectPage,
   openDatabase,
   updateCommercialScript,
+  updateProspectFollowUp,
   updateProspectOutreachStatus,
   updateProspectRejectionReason
 } from "../src/storage/database.js";
@@ -111,6 +113,15 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
     updateProspectRejectionReason(db, prospectsPage.items[0].id, "");
     const clearedRejectionPage = getProspectPage(db, { campaignId: campaign.id });
     assert.equal(clearedRejectionPage.items[0].rejectionReason, "");
+    updateProspectFollowUp(db, prospectsPage.items[0].id, {
+      lastContactedAt: "2026-06-01",
+      followUpNotes: "Relancer apres devis."
+    });
+    const followUpPage = getFollowUpProspectPage(db, { outreachStatus: "Décliné" });
+    assert.equal(followUpPage.total, 1);
+    assert.equal(followUpPage.items[0].lastContactedAt, "2026-06-01");
+    assert.equal(followUpPage.items[0].followUpNotes, "Relancer apres devis.");
+    assert.equal(getFollowUpProspectPage(db, { outreachStatus: "A contacter" }).total, 0);
 
     const script = updateCommercialScript(db, "restaurants", {
       smsHook: "Nouvelle accroche"
@@ -261,6 +272,113 @@ test("conserve les statuts commerciaux autorises apres migration et relance coll
     assert.throws(
       () => updateProspectOutreachStatus(db, page.items[0].id, "Contacté"),
       /invalid_outreach_status/
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("conserve les champs de suivi apres relance collecte", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-follow-up-"));
+  const runtimeConfig = {
+    dbPath: path.join(tmp, "prospector.sqlite"),
+    exportDir: path.join(tmp, "exports"),
+    cacheDir: path.join(tmp, "cache")
+  };
+  const campaign = {
+    id: "follow-up-campaign",
+    name: "Follow Up Campaign",
+    businessType: "garages automobiles",
+    targetCount: 50,
+    cities: ["Pantin"],
+    localAngle: "Angle local.",
+    sources: {}
+  };
+  const fixtureRecords = [
+    normalizeSourceRecord({
+      source: "fixture",
+      sourceId: "1",
+      name: "Garage Suivi Pantin",
+      city: "Pantin",
+      phone: "0102030405",
+      evidence: ["shop=car_repair"]
+    })
+  ];
+
+  await runCampaign(campaign, runtimeConfig, { fixtureRecords });
+  let db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const page = getProspectPage(db, { campaignId: campaign.id });
+    updateProspectOutreachStatus(db, page.items[0].id, "Interessé");
+    updateProspectFollowUp(db, page.items[0].id, {
+      lastContactedAt: "2026-06-01",
+      followUpNotes: "A rappeler vendredi."
+    });
+  } finally {
+    db.close();
+  }
+
+  await runCampaign(campaign, runtimeConfig, { fixtureRecords });
+
+  db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const followUpPage = getFollowUpProspectPage(db);
+    assert.equal(followUpPage.total, 1);
+    assert.equal(followUpPage.items[0].outreachStatus, "Interessé");
+    assert.equal(followUpPage.items[0].lastContactedAt, "2026-06-01");
+    assert.equal(followUpPage.items[0].followUpNotes, "A rappeler vendredi.");
+  } finally {
+    db.close();
+  }
+});
+
+test("suivi liste les statuts traites et exclut a contacter", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-follow-up-statuses-"));
+  const runtimeConfig = {
+    dbPath: path.join(tmp, "prospector.sqlite"),
+    exportDir: path.join(tmp, "exports"),
+    cacheDir: path.join(tmp, "cache")
+  };
+  const campaign = {
+    id: "follow-up-statuses-campaign",
+    name: "Follow Up Statuses Campaign",
+    businessType: "garages automobiles",
+    targetCount: 50,
+    cities: ["Pantin"],
+    localAngle: "Angle local.",
+    sources: {}
+  };
+
+  await runCampaign(campaign, runtimeConfig, {
+    fixtureRecords: ["Decline", "Interesse", "Accepte", "Nouveau"].map((name, index) =>
+      normalizeSourceRecord({
+        source: "fixture",
+        sourceId: String(index + 1),
+        name: `Garage ${name} Pantin`,
+        city: "Pantin",
+        phone: `010203040${index}`,
+        evidence: ["shop=car_repair"]
+      })
+    )
+  });
+
+  const db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const page = getProspectPage(db, { campaignId: campaign.id, sort: "name" });
+    const byName = new Map(page.items.map((prospect) => [prospect.name, prospect.id]));
+    updateProspectOutreachStatus(db, byName.get("Garage Accepte Pantin"), "A accepté");
+    updateProspectOutreachStatus(db, byName.get("Garage Decline Pantin"), "Décliné", "doublon");
+    updateProspectOutreachStatus(db, byName.get("Garage Interesse Pantin"), "Interessé");
+
+    const followUpPage = getFollowUpProspectPage(db, { sort: "name" });
+    assert.equal(followUpPage.total, 3);
+    assert.deepEqual(
+      followUpPage.items.map((prospect) => prospect.outreachStatus).sort(),
+      ["A accepté", "Décliné", "Interessé"].sort()
+    );
+    assert.equal(
+      followUpPage.items.some((prospect) => prospect.outreachStatus === "A contacter"),
+      false
     );
   } finally {
     db.close();
