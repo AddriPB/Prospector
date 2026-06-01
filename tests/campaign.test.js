@@ -7,6 +7,7 @@ import { runCampaign } from "../src/campaign/runCampaign.js";
 import { normalizeSourceRecord } from "../src/normalize/prospect.js";
 import {
   getDashboardState,
+  getProspectPage,
   openDatabase,
   updateProspectOutreachStatus
 } from "../src/storage/database.js";
@@ -50,13 +51,16 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
   const db = await openDatabase(runtimeConfig.dbPath);
   try {
     const dashboard = getDashboardState(db, campaign.id);
+    const prospectsPage = getProspectPage(db, { campaignId: campaign.id });
     assert.equal(dashboard.campaign.sector, "automotive");
-    assert.equal(dashboard.prospects[0].sector, "automotive");
-    assert.equal(dashboard.prospects[0].outreachStatus, "A contacter");
+    assert.equal(dashboard.summary.totalProspects, 1);
+    assert.equal(prospectsPage.total, 1);
+    assert.equal(prospectsPage.items[0].sector, "automotive");
+    assert.equal(prospectsPage.items[0].outreachStatus, "A contacter");
 
-    updateProspectOutreachStatus(db, dashboard.prospects[0].id, "Contacté");
-    const updatedDashboard = getDashboardState(db, campaign.id);
-    assert.equal(updatedDashboard.prospects[0].outreachStatus, "Contacté");
+    updateProspectOutreachStatus(db, prospectsPage.items[0].id, "Contacté");
+    const updatedProspectsPage = getProspectPage(db, { campaignId: campaign.id });
+    assert.equal(updatedProspectsPage.items[0].outreachStatus, "Contacté");
   } finally {
     db.close();
   }

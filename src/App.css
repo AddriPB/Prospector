@@ -209,6 +209,27 @@ h2 {
   width: min(100%, 240px);
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.pagination button {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.pagination span {
+  min-width: 110px;
+  color: #344139;
+  font-weight: 800;
+  text-align: center;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -339,6 +360,10 @@ td span {
   }
 
   .actions {
+    justify-content: flex-start;
+  }
+
+  .pagination {
     justify-content: flex-start;
   }
 

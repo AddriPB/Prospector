@@ -93,6 +93,7 @@ export function migrate(db) {
       created_at TEXT NOT NULL,
       UNIQUE (prospect_id, type, value)
     );
+
   `);
 
   addColumnIfMissing(db, "prospects", "source_records_json", "TEXT NOT NULL DEFAULT '[]'");
@@ -118,6 +119,17 @@ export function migrate(db) {
     "sector",
     `TEXT NOT NULL DEFAULT '${DEFAULT_SECTOR}'`
   );
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_campaign_prospects_score
+      ON campaign_prospects(score DESC);
+    CREATE INDEX IF NOT EXISTS idx_campaign_prospects_first_seen
+      ON campaign_prospects(first_seen_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_campaigns_sector
+      ON campaigns(sector);
+    CREATE INDEX IF NOT EXISTS idx_prospects_outreach_status
+      ON prospects(outreach_status);
+  `);
 }
 
 export function saveCampaignRun(connection, campaign, prospects) {
@@ -280,9 +292,6 @@ export function getCampaignResults(connection, campaignId) {
 }
 
 export function getDashboardState(connection, campaignId = null) {
-  const prospects = campaignId
-    ? getCampaignResults(connection, campaignId)
-    : getAllCampaignResults(connection);
   const campaigns = campaignId
     ? [
         get(
@@ -312,12 +321,13 @@ export function getDashboardState(connection, campaignId = null) {
   );
   const today = new Date().toISOString().slice(0, 10);
   const newToday = Number(newByDay.find((row) => row.day === today)?.count || 0);
+  const totalProspects = getProspectCount(connection, { campaignId });
 
   return {
     campaign: campaign || null,
     campaigns,
     summary: {
-      totalProspects: prospects.length,
+      totalProspects,
       newToday,
       targetCount: campaigns.reduce((sum, item) => sum + Number(item.target_count || 0), 0),
       latestRunAt: latestDate(campaigns.map((item) => item.last_run_at))
@@ -326,9 +336,62 @@ export function getDashboardState(connection, campaignId = null) {
     filters: {
       sectors: sectorOptions(),
       outreachStatuses: OUTREACH_STATUSES
-    },
-    prospects: prospects.map((prospect) => toDashboardProspect(prospect))
+    }
   };
+}
+
+export function getProspectPage(connection, options = {}) {
+  const limit = clampPositiveInteger(options.limit, 100, 500);
+  const offset = Math.max(0, Number(options.offset) || 0);
+  const { whereSql, params } = buildProspectsWhere(options);
+  const orderSql = prospectOrderSql(options.sort);
+  const total = getProspectCount(connection, options);
+  const rows = all(
+    connection.db,
+    `SELECT
+      c.id AS campaign_id,
+      c.sector AS campaign_sector,
+      p.*,
+      cp.score,
+      cp.score_reasons_json,
+      cp.message,
+      cp.first_seen_at,
+      cp.last_seen_at
+    FROM campaign_prospects cp
+    JOIN prospects p ON p.id = cp.prospect_id
+    JOIN campaigns c ON c.id = cp.campaign_id
+    ${whereSql}
+    ${orderSql}
+    LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  ).map((row) => ({
+    ...row,
+    social: JSON.parse(row.social_json || "[]"),
+    sources: JSON.parse(row.sources_json || "[]"),
+    sourceRecords: JSON.parse(row.source_records_json || "[]"),
+    scoreReasons: JSON.parse(row.score_reasons_json || "[]")
+  }));
+
+  return {
+    items: rows.map((prospect) => toDashboardProspect(prospect)),
+    total,
+    limit,
+    offset
+  };
+}
+
+function getProspectCount(connection, options = {}) {
+  const { whereSql, params } = buildProspectsWhere(options);
+  const row = get(
+    connection.db,
+    `SELECT COUNT(*) AS count
+     FROM campaign_prospects cp
+     JOIN prospects p ON p.id = cp.prospect_id
+     JOIN campaigns c ON c.id = cp.campaign_id
+     ${whereSql}`,
+    params
+  );
+  return Number(row?.count || 0);
 }
 
 export function updateProspectOutreachStatus(connection, prospectId, outreachStatus) {
@@ -366,6 +429,44 @@ function getAllCampaignResults(connection) {
     sourceRecords: JSON.parse(row.source_records_json || "[]"),
     scoreReasons: JSON.parse(row.score_reasons_json || "[]")
   }));
+}
+
+function buildProspectsWhere(options = {}) {
+  const conditions = [];
+  const params = [];
+  if (options.campaignId) {
+    conditions.push("cp.campaign_id = ?");
+    params.push(options.campaignId);
+  }
+  if (options.sector && options.sector !== "all") {
+    conditions.push("c.sector = ?");
+    params.push(options.sector);
+  }
+  if (options.outreachStatus && options.outreachStatus !== "all") {
+    conditions.push("p.outreach_status = ?");
+    params.push(options.outreachStatus);
+  }
+
+  return {
+    whereSql: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
+    params
+  };
+}
+
+function prospectOrderSql(sort = "priority") {
+  if (sort === "newest") {
+    return "ORDER BY cp.first_seen_at DESC, cp.score DESC, p.name ASC";
+  }
+  if (sort === "name") {
+    return "ORDER BY p.name ASC, cp.score DESC, cp.first_seen_at DESC";
+  }
+  return "ORDER BY cp.score DESC, cp.first_seen_at DESC, p.name ASC";
+}
+
+function clampPositiveInteger(value, fallback, max) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
 }
 
 function toDashboardProspect(row) {

@@ -1,26 +1,29 @@
 import { runCampaign } from "../campaign/runCampaign.js";
 
-export function startNightlyWorker(campaign, runtimeConfig) {
+export function startNightlyWorker(campaignsInput, runtimeConfig) {
+  const campaigns = Array.isArray(campaignsInput) ? campaignsInput : [campaignsInput];
   let running = false;
 
   const runOnce = async () => {
     if (running) {
-      console.log(`[prospector] Campagne nocturne deja en cours ${campaign.id}`);
+      console.log("[prospector] Campagnes nocturnes deja en cours");
       return;
     }
 
     running = true;
     try {
-      console.log(`[prospector] Lancement campagne nocturne ${campaign.id}`);
-      const result = await runCampaign(campaign, runtimeConfig);
-      const errorSuffix = result.collectionErrors?.length
-        ? `, sources ignorees: ${result.collectionErrors
-            .map((error) => `${error.source} (${error.message})`)
-            .join("; ")}`
-        : "";
-      console.log(
-        `[prospector] Campagne terminee: ${result.qualified} prospects, CSV ${result.exportPaths.csvPath}${errorSuffix}`
-      );
+      for (const campaign of campaigns) {
+        console.log(`[prospector] Lancement campagne nocturne ${campaign.id}`);
+        const result = await runCampaign(campaign, runtimeConfig);
+        const errorSuffix = result.collectionErrors?.length
+          ? `, sources ignorees: ${result.collectionErrors
+              .map((error) => `${error.source} (${error.message})`)
+              .join("; ")}`
+          : "";
+        console.log(
+          `[prospector] Campagne terminee: ${campaign.id}, ${result.qualified} prospects, CSV ${result.exportPaths.csvPath}${errorSuffix}`
+        );
+      }
     } finally {
       running = false;
     }
@@ -42,7 +45,9 @@ export function startNightlyWorker(campaign, runtimeConfig) {
   };
 
   console.log(
-    `[prospector] Worker actif, campagne ${campaign.id}, horaire ${runtimeConfig.nightlyHour}:${String(
+    `[prospector] Worker actif, campagnes ${campaigns
+      .map((campaign) => campaign.id)
+      .join(", ")}, horaire ${runtimeConfig.nightlyHour}:${String(
       runtimeConfig.nightlyMinute
     ).padStart(2, "0")} ${runtimeConfig.timezone}`
   );

@@ -1,12 +1,12 @@
 import express from "express";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadConfiguredCampaigns } from "../campaign/configuredCampaigns.js";
 import { runCampaign } from "../campaign/runCampaign.js";
-import { loadJsonFile } from "../config.js";
 import {
   openDatabase,
   getDashboardState,
+  getProspectPage,
   updateProspectOutreachStatus
 } from "../storage/database.js";
 import { OUTREACH_STATUSES } from "../outreachStatus.js";
@@ -18,7 +18,7 @@ const OUTREACH_STATUS_SET = new Set(OUTREACH_STATUSES);
 
 export async function startServer(campaign, runtimeConfig) {
   const app = express();
-  const dashboardCampaigns = loadConfiguredCampaigns(campaign);
+  const configuredCampaigns = loadConfiguredCampaigns(campaign);
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb" }));
 
@@ -56,10 +56,31 @@ export async function startServer(campaign, runtimeConfig) {
     }
   });
 
+  app.get("/api/prospects", requireAuth, async (req, res, next) => {
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        res.json(
+          getProspectPage(db, {
+            sector: String(req.query.sector || "all"),
+            outreachStatus: String(req.query.outreachStatus || "all"),
+            sort: String(req.query.sort || "priority"),
+            limit: parseIntegerQuery(req.query.limit, 100),
+            offset: parseIntegerQuery(req.query.offset, 0)
+          })
+        );
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/campaign/run", requireAuth, async (_req, res, next) => {
     try {
       const results = [];
-      for (const dashboardCampaign of dashboardCampaigns) {
+      for (const dashboardCampaign of configuredCampaigns) {
         results.push(await runCampaign(dashboardCampaign, runtimeConfig));
       }
       res.json({
@@ -69,11 +90,11 @@ export async function startServer(campaign, runtimeConfig) {
         collectionErrors: results.flatMap((result, index) =>
           result.collectionErrors.map((error) => ({
             ...error,
-            campaign: dashboardCampaigns[index].id
+            campaign: configuredCampaigns[index].id
           }))
         ),
         campaigns: results.map((result, index) => ({
-          id: dashboardCampaigns[index].id,
+          id: configuredCampaigns[index].id,
           collected: result.collected,
           qualified: result.qualified
         }))
@@ -126,15 +147,7 @@ export async function startServer(campaign, runtimeConfig) {
   });
 }
 
-function loadConfiguredCampaigns(fallbackCampaign) {
-  const campaignDir = path.join(projectRoot, "config/campaigns");
-  if (!fs.existsSync(campaignDir)) return [fallbackCampaign];
-
-  const campaigns = fs
-    .readdirSync(campaignDir)
-    .filter((file) => file.endsWith(".json"))
-    .sort()
-    .map((file) => loadJsonFile(path.join("config/campaigns", file)));
-
-  return campaigns.length ? campaigns : [fallbackCampaign];
+function parseIntegerQuery(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : fallback;
 }

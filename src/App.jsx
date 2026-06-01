@@ -3,6 +3,8 @@ import { OUTREACH_STATUSES } from "./outreachStatus.js";
 import { sectorOptions } from "./sectors.js";
 
 const SESSION_TOKEN_KEY = "prospector_session_token";
+const DEFAULT_PAGE_SIZE = 100;
+const PAGE_SIZE_OPTIONS = [100, 250, 500];
 const DEFAULT_API_BASE = String(import.meta.env.VITE_PUBLIC_API_BASE || "").replace(
   /\/$/,
   ""
@@ -14,22 +16,30 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [dashboard, setDashboard] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [prospectsPage, setProspectsPage] = useState({
+    items: [],
+    total: 0,
+    limit: DEFAULT_PAGE_SIZE,
+    offset: 0
+  });
+  const [prospectsLoading, setProspectsLoading] = useState(false);
+  const [prospectsCache, setProspectsCache] = useState({});
   const [runLoading, setRunLoading] = useState(false);
   const [statusSaving, setStatusSaving] = useState({});
   const [sectorFilter, setSectorFilter] = useState("all");
   const [outreachStatusFilter, setOutreachStatusFilter] = useState("all");
+  const [sortOrder, setSortOrder] = useState("priority");
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [pageIndex, setPageIndex] = useState(0);
 
   const api = useMemo(() => createApi(DEFAULT_API_BASE), []);
-  const prospects = dashboard?.prospects || [];
+  const prospects = prospectsPage.items || [];
   const sectors = dashboard?.filters?.sectors || sectorOptions();
   const outreachStatuses = dashboard?.filters?.outreachStatuses || OUTREACH_STATUSES;
-  const filteredProspects = prospects.filter((prospect) => {
-    const matchesSector = sectorFilter === "all" || prospect.sector === sectorFilter;
-    const matchesOutreachStatus =
-      outreachStatusFilter === "all" ||
-      (prospect.outreachStatus || "A contacter") === outreachStatusFilter;
-    return matchesSector && matchesOutreachStatus;
-  });
+  const totalProspects = prospectsPage.total || 0;
+  const pageCount = Math.max(1, Math.ceil(totalProspects / pageSize));
+  const pageStart = totalProspects ? prospectsPage.offset + 1 : 0;
+  const pageEnd = Math.min(prospectsPage.offset + prospects.length, totalProspects);
 
   useEffect(() => {
     api("/api/auth/me")
@@ -45,6 +55,15 @@ export default function App() {
     if (!authenticated) return;
     loadDashboard();
   }, [authenticated, api]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [sectorFilter, outreachStatusFilter, sortOrder, pageSize]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    loadProspects();
+  }, [authenticated, sectorFilter, outreachStatusFilter, sortOrder, pageSize, pageIndex]);
 
   async function login(event) {
     event.preventDefault();
@@ -75,6 +94,8 @@ export default function App() {
     clearSessionToken();
     setAuthenticated(false);
     setDashboard(null);
+    setProspectsPage({ items: [], total: 0, limit: DEFAULT_PAGE_SIZE, offset: 0 });
+    setProspectsCache({});
   }
 
   async function loadDashboard() {
@@ -94,6 +115,50 @@ export default function App() {
     }
   }
 
+  async function loadProspects(options = {}) {
+    const requestedPageIndex = options.pageIndex ?? pageIndex;
+    const offset = requestedPageIndex * pageSize;
+    const params = new URLSearchParams({
+      sector: sectorFilter,
+      outreachStatus: outreachStatusFilter,
+      sort: sortOrder,
+      limit: String(pageSize),
+      offset: String(offset)
+    });
+    const cacheKey = params.toString();
+
+    if (!options.force && prospectsCache[cacheKey]) {
+      setProspectsPage(prospectsCache[cacheKey]);
+      return;
+    }
+
+    setProspectsLoading(true);
+    setMessage("");
+    try {
+      const page = await api(`/api/prospects?${cacheKey}`);
+      setProspectsPage(page);
+      setProspectsCache((current) => ({ ...current, [cacheKey]: page }));
+      if (page.total > 0 && offset >= page.total && requestedPageIndex > 0) {
+        setPageIndex(Math.max(0, Math.ceil(page.total / pageSize) - 1));
+      }
+    } catch (error) {
+      if (error.status === 401) {
+        clearSessionToken();
+        setAuthenticated(false);
+        return;
+      }
+      setMessage(apiErrorMessage(error, "Impossible de charger les prospects."));
+    } finally {
+      setProspectsLoading(false);
+    }
+  }
+
+  async function refreshDashboard() {
+    setProspectsCache({});
+    await loadDashboard();
+    await loadProspects({ force: true });
+  }
+
   async function runCampaign() {
     setRunLoading(true);
     setMessage("");
@@ -106,6 +171,9 @@ export default function App() {
         : "";
       setMessage(`Collecte terminee : ${result.qualified} prospects qualifies.${warnings}`);
       await loadDashboard();
+      setProspectsCache({});
+      setPageIndex(0);
+      await loadProspects({ force: true, pageIndex: 0 });
     } catch (error) {
       setMessage(apiErrorMessage(error, "Impossible de lancer la collecte."));
     } finally {
@@ -115,7 +183,8 @@ export default function App() {
 
   async function updateOutreachStatus(prospectId, outreachStatus) {
     const previousStatus = prospects.find((prospect) => prospect.id === prospectId)?.outreachStatus;
-    setDashboard((current) => updateDashboardProspectStatus(current, prospectId, outreachStatus));
+    setProspectsPage((current) => updateProspectPageStatus(current, prospectId, outreachStatus));
+    setProspectsCache((current) => updateProspectsCacheStatus(current, prospectId, outreachStatus));
     setStatusSaving((current) => ({ ...current, [prospectId]: true }));
     setMessage("");
 
@@ -126,7 +195,10 @@ export default function App() {
       });
     } catch (error) {
       if (previousStatus) {
-        setDashboard((current) => updateDashboardProspectStatus(current, prospectId, previousStatus));
+        setProspectsPage((current) => updateProspectPageStatus(current, prospectId, previousStatus));
+        setProspectsCache((current) =>
+          updateProspectsCacheStatus(current, prospectId, previousStatus)
+        );
       }
       setMessage(apiErrorMessage(error, "Impossible de modifier l'etat."));
     } finally {
@@ -183,7 +255,7 @@ export default function App() {
           </p>
         </div>
         <div className="actions">
-          <button onClick={loadDashboard} disabled={dashboardLoading}>
+          <button onClick={refreshDashboard} disabled={dashboardLoading || prospectsLoading}>
             Actualiser
           </button>
           <button onClick={runCampaign} disabled={runLoading}>
@@ -220,7 +292,7 @@ export default function App() {
           <div className="section-header">
             <h2>Prospects et contacts</h2>
             <span>
-              {filteredProspects.length} / {prospects.length} lignes
+              {pageStart}-{pageEnd} / {totalProspects} lignes
             </span>
           </div>
           <div className="filters">
@@ -252,7 +324,37 @@ export default function App() {
                 ))}
               </select>
             </label>
+            <label>
+              Tri
+              <select
+                value={sortOrder}
+                onChange={(event) => setSortOrder(event.target.value)}
+              >
+                <option value="priority">Score prioritaire</option>
+                <option value="newest">Nouveaux d'abord</option>
+                <option value="name">Nom A-Z</option>
+              </select>
+            </label>
+            <label>
+              Lignes
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(Number(event.target.value))}
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size} par page
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
+          <PaginationControls
+            pageIndex={pageIndex}
+            pageCount={pageCount}
+            loading={prospectsLoading}
+            onPageChange={setPageIndex}
+          />
           <div className="table-wrap">
             <table>
               <thead>
@@ -266,7 +368,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {filteredProspects.map((prospect) => (
+                {prospects.map((prospect) => (
                   <tr key={prospect.id}>
                     <td className="score">{prospect.score}</td>
                     <td>{sectorLabel(prospect.sector, sectors)}</td>
@@ -311,8 +413,14 @@ export default function App() {
                 ))}
               </tbody>
             </table>
-            {!filteredProspects.length ? <p className="muted empty">Aucun prospect.</p> : null}
+            {!prospects.length ? <p className="muted empty">Aucun prospect.</p> : null}
           </div>
+          <PaginationControls
+            pageIndex={pageIndex}
+            pageCount={pageCount}
+            loading={prospectsLoading}
+            onPageChange={setPageIndex}
+          />
         </article>
       </section>
     </main>
@@ -325,6 +433,48 @@ function Metric({ label, value }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
+  );
+}
+
+function PaginationControls({ pageIndex, pageCount, loading, onPageChange }) {
+  return (
+    <nav className="pagination" aria-label="Pagination prospects">
+      <button
+        className="secondary"
+        type="button"
+        disabled={loading || pageIndex <= 0}
+        onClick={() => onPageChange(0)}
+      >
+        Debut
+      </button>
+      <button
+        className="secondary"
+        type="button"
+        disabled={loading || pageIndex <= 0}
+        onClick={() => onPageChange(Math.max(0, pageIndex - 1))}
+      >
+        Precedent
+      </button>
+      <span>
+        Page {pageIndex + 1} / {pageCount}
+      </span>
+      <button
+        className="secondary"
+        type="button"
+        disabled={loading || pageIndex >= pageCount - 1}
+        onClick={() => onPageChange(Math.min(pageCount - 1, pageIndex + 1))}
+      >
+        Suivant
+      </button>
+      <button
+        className="secondary"
+        type="button"
+        disabled={loading || pageIndex >= pageCount - 1}
+        onClick={() => onPageChange(pageCount - 1)}
+      >
+        Fin
+      </button>
+    </nav>
   );
 }
 
@@ -350,14 +500,23 @@ function ContactList({ prospect }) {
   );
 }
 
-function updateDashboardProspectStatus(dashboard, prospectId, outreachStatus) {
-  if (!dashboard) return dashboard;
+function updateProspectPageStatus(page, prospectId, outreachStatus) {
+  if (!page) return page;
   return {
-    ...dashboard,
-    prospects: (dashboard.prospects || []).map((prospect) =>
+    ...page,
+    items: (page.items || []).map((prospect) =>
       prospect.id === prospectId ? { ...prospect, outreachStatus } : prospect
     )
   };
+}
+
+function updateProspectsCacheStatus(cache, prospectId, outreachStatus) {
+  return Object.fromEntries(
+    Object.entries(cache).map(([key, page]) => [
+      key,
+      updateProspectPageStatus(page, prospectId, outreachStatus)
+    ])
+  );
 }
 
 function sectorLabel(sectorId, sectors) {
