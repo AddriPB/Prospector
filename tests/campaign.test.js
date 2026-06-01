@@ -8,6 +8,7 @@ import { runCampaign } from "../src/campaign/runCampaign.js";
 import { recalculateScoringV2 } from "../src/migrations/recalculateScoringV2.js";
 import { normalizeSourceRecord } from "../src/normalize/prospect.js";
 import { OUTREACH_STATUSES } from "../src/outreachStatus.js";
+import { nextNightlyDelayMs } from "../src/scheduler/nightly.js";
 import {
   getDashboardState,
   getProspectPage,
@@ -67,6 +68,13 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
     const prospectsPage = getProspectPage(db, { campaignId: campaign.id });
     assert.equal(dashboard.campaign.sector, "automotive");
     assert.equal(dashboard.summary.totalProspects, 1);
+    assert.equal(dashboard.dailyRuns[0].runs, 1);
+    assert.equal(dashboard.dailyRuns[0].collected, 2);
+    assert.equal(dashboard.dailyRuns[0].qualified, 1);
+    assert.equal(dashboard.dailyRuns[0].topScore, prospectsPage.items[0].score);
+    assert.equal(dashboard.recentRuns[0].campaignId, campaign.id);
+    assert.equal(dashboard.recentRuns[0].collected, 2);
+    assert.equal(dashboard.recentRuns[0].qualified, 1);
     assert.equal(prospectsPage.total, 1);
     assert.equal(prospectsPage.items[0].sector, "automotive");
     assert.equal(prospectsPage.items[0].outreachStatus, "A contacter");
@@ -119,6 +127,23 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
   } finally {
     db.close();
   }
+});
+
+test("planifie la collecte quotidienne a 4h heure locale", () => {
+  const runtimeConfig = {
+    timezone: "Europe/Paris",
+    nightlyHour: 4,
+    nightlyMinute: 0
+  };
+
+  assert.equal(
+    nextNightlyDelayMs(runtimeConfig, new Date("2026-06-01T01:30:00.000Z")),
+    30 * 60 * 1000
+  );
+  assert.equal(
+    nextNightlyDelayMs(runtimeConfig, new Date("2026-06-01T02:30:00.000Z")),
+    23.5 * 60 * 60 * 1000
+  );
 });
 
 test("signale les doublons persistants sans supprimer de prospect", async () => {

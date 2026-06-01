@@ -399,6 +399,66 @@ export default function App() {
             <Metric label="Nouveaux aujourd'hui" value={dashboard?.summary?.newToday ?? "-"} />
           </section>
           <article className="panel">
+            <h2>Resultats quotidiens des collectes</h2>
+            <div className="table-wrap">
+              <table className="stats-table daily-runs-table">
+                <thead>
+                  <tr>
+                    <th>Jour</th>
+                    <th>Collectes</th>
+                    <th>Bruts</th>
+                    <th>Qualifies</th>
+                    <th>Meilleur score</th>
+                    <th>Alertes sources</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(dashboard?.dailyRuns || []).map((row) => (
+                    <tr key={row.day}>
+                      <td>{formatDateOnly(row.day)}</td>
+                      <td>{row.runs}</td>
+                      <td>{row.collected}</td>
+                      <td>{row.qualified}</td>
+                      <td>{row.topScore ?? "-"}</td>
+                      <td>{row.runsWithErrors || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!dashboard?.dailyRuns?.length ? <p className="muted empty">Aucun historique.</p> : null}
+            </div>
+          </article>
+          <article className="panel">
+            <h2>Dernieres collectes</h2>
+            <div className="table-wrap">
+              <table className="stats-table recent-runs-table">
+                <thead>
+                  <tr>
+                    <th>Fin</th>
+                    <th>Campagne</th>
+                    <th>Bruts</th>
+                    <th>Qualifies</th>
+                    <th>Meilleur score</th>
+                    <th>Sources ignorees</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(dashboard?.recentRuns || []).map((run) => (
+                    <tr key={run.id}>
+                      <td>{formatDate(run.finishedAt)}</td>
+                      <td>{run.campaignName}</td>
+                      <td>{run.collected}</td>
+                      <td>{run.qualified}</td>
+                      <td>{run.topScore ?? "-"}</td>
+                      <td>{formatCollectionErrors(run.collectionErrors)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!dashboard?.recentRuns?.length ? <p className="muted empty">Aucune collecte journalisee.</p> : null}
+            </div>
+          </article>
+          <article className="panel">
             <h2>Nouveaux prospects par jour</h2>
             <div className="daily-list">
               {(dashboard?.newByDay || []).map((row) => (
@@ -910,6 +970,11 @@ function formatDateOnly(value) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(Number(value) || 0);
+}
+
+function formatCollectionErrors(errors) {
+  if (!errors?.length) return "-";
+  return errors.map((error) => error.source || "source").join(", ");
 }
 
 function loginErrorMessage(error) {

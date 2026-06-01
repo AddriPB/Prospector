@@ -157,7 +157,8 @@ function businessRowCount(db) {
   return (
     safeCount(db, "prospects") +
     safeCount(db, "campaign_prospects") +
-    safeCount(db, "campaigns")
+    safeCount(db, "campaigns") +
+    safeCount(db, "campaign_runs")
   );
 }
 
@@ -263,6 +264,19 @@ export function migrate(db) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS campaign_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL,
+      collected_count INTEGER NOT NULL,
+      qualified_count INTEGER NOT NULL,
+      top_score INTEGER,
+      collection_errors_json TEXT NOT NULL DEFAULT '[]',
+      export_csv_path TEXT,
+      export_markdown_path TEXT
+    );
+
   `);
 
   addColumnIfMissing(db, "prospects", "source_records_json", "TEXT NOT NULL DEFAULT '[]'");
@@ -324,6 +338,10 @@ export function migrate(db) {
       ON prospects(city);
     CREATE INDEX IF NOT EXISTS idx_prospects_duplicate
       ON prospects(duplicate_suspected, duplicate_of);
+    CREATE INDEX IF NOT EXISTS idx_campaign_runs_finished
+      ON campaign_runs(finished_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign_finished
+      ON campaign_runs(campaign_id, finished_at DESC);
   `);
 
   markDuplicateSuspicions(db);
@@ -465,6 +483,29 @@ export function saveCampaignRun(connection, campaign, prospects) {
   }
 }
 
+export function saveCampaignRunResult(connection, campaign, result) {
+  run(
+    connection.db,
+    `INSERT INTO campaign_runs (
+      campaign_id, started_at, finished_at, collected_count, qualified_count,
+      top_score, collection_errors_json, export_csv_path, export_markdown_path
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      campaign.id,
+      result.startedAt,
+      result.finishedAt,
+      Number(result.collected || 0),
+      Number(result.qualified || 0),
+      result.topScore == null ? null : Number(result.topScore),
+      JSON.stringify(result.collectionErrors || []),
+      result.exportPaths?.csvPath || null,
+      result.exportPaths?.markdownPath || null
+    ]
+  );
+  connection.persist();
+}
+
 export function getCampaignResults(connection, campaignId) {
   return all(
     connection.db,
@@ -526,6 +567,7 @@ export function getDashboardState(connection, campaignId = null) {
   const newToday = Number(newByDay.find((row) => row.day === today)?.count || 0);
   const totalProspects = getProspectCount(connection, { campaignId });
   const citySegments = getCitySegments(connection, campaignId);
+  const recentRuns = getRecentCampaignRuns(connection, campaignId);
 
   return {
     campaign: campaign || null,
@@ -537,6 +579,8 @@ export function getDashboardState(connection, campaignId = null) {
       latestRunAt: latestDate(campaigns.map((item) => item.last_run_at))
     },
     newByDay,
+    dailyRuns: getDailyCampaignRuns(connection, campaignId),
+    recentRuns,
     citySegments,
     commercialScripts: getCommercialScripts(connection),
     filters: {
@@ -545,6 +589,68 @@ export function getDashboardState(connection, campaignId = null) {
       rejectionReasons: REJECTION_REASONS
     }
   };
+}
+
+function getDailyCampaignRuns(connection, campaignId = null) {
+  return all(
+    connection.db,
+    `SELECT
+      substr(finished_at, 1, 10) AS day,
+      COUNT(*) AS runs,
+      SUM(collected_count) AS collected,
+      SUM(qualified_count) AS qualified,
+      MAX(top_score) AS top_score,
+      SUM(CASE WHEN collection_errors_json != '[]' THEN 1 ELSE 0 END) AS runs_with_errors
+     FROM campaign_runs
+     WHERE (? IS NULL OR campaign_id = ?)
+     GROUP BY day
+     ORDER BY day DESC
+     LIMIT 14`,
+    [campaignId, campaignId]
+  ).map((row) => ({
+    day: row.day,
+    runs: Number(row.runs || 0),
+    collected: Number(row.collected || 0),
+    qualified: Number(row.qualified || 0),
+    topScore: row.top_score == null ? null : Number(row.top_score),
+    runsWithErrors: Number(row.runs_with_errors || 0)
+  }));
+}
+
+function getRecentCampaignRuns(connection, campaignId = null) {
+  return all(
+    connection.db,
+    `SELECT
+      cr.id,
+      cr.campaign_id,
+      c.name AS campaign_name,
+      cr.started_at,
+      cr.finished_at,
+      cr.collected_count,
+      cr.qualified_count,
+      cr.top_score,
+      cr.collection_errors_json,
+      cr.export_csv_path,
+      cr.export_markdown_path
+     FROM campaign_runs cr
+     LEFT JOIN campaigns c ON c.id = cr.campaign_id
+     WHERE (? IS NULL OR cr.campaign_id = ?)
+     ORDER BY cr.finished_at DESC
+     LIMIT 10`,
+    [campaignId, campaignId]
+  ).map((row) => ({
+    id: Number(row.id),
+    campaignId: row.campaign_id,
+    campaignName: row.campaign_name || row.campaign_id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    collected: Number(row.collected_count || 0),
+    qualified: Number(row.qualified_count || 0),
+    topScore: row.top_score == null ? null : Number(row.top_score),
+    collectionErrors: safeJsonParse(row.collection_errors_json, []),
+    exportCsvPath: row.export_csv_path,
+    exportMarkdownPath: row.export_markdown_path
+  }));
 }
 
 export function getProspectPage(connection, options = {}) {

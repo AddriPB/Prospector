@@ -5,10 +5,16 @@ import {
 } from "../normalize/prospect.js";
 import { scoreProspect } from "../score/scoreProspect.js";
 import { buildContactMessage } from "../messages/contactMessage.js";
-import { openDatabase, saveCampaignRun, getCampaignResults } from "../storage/database.js";
+import {
+  getCampaignResults,
+  openDatabase,
+  saveCampaignRun,
+  saveCampaignRunResult
+} from "../storage/database.js";
 import { exportCampaign } from "../exports/exportCampaign.js";
 
 export async function runCampaign(campaign, runtimeConfig, options = {}) {
+  const startedAt = new Date().toISOString();
   let sourceRecords = options.fixtureRecords || null;
   let collectionErrors = [];
 
@@ -35,6 +41,15 @@ export async function runCampaign(campaign, runtimeConfig, options = {}) {
     saveCampaignRun(db, campaign, prospects);
     const rows = getCampaignResults(db, campaign.id);
     const exportPaths = exportCampaign(campaign, rows, runtimeConfig.exportDir);
+    saveCampaignRunResult(db, campaign, {
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      collected: sourceRecords.length,
+      qualified: rows.length,
+      topScore: rows[0]?.score ?? null,
+      collectionErrors,
+      exportPaths
+    });
     return {
       collected: sourceRecords.length,
       qualified: rows.length,

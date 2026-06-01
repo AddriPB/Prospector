@@ -30,7 +30,7 @@ async function main() {
   }
 
   if (scope === "campaign" && command === "nightly") {
-    startNightlyWorker(campaign, runtimeConfig);
+    startNightlyWorker(loadConfiguredCampaigns(campaign), runtimeConfig);
     return;
   }
 

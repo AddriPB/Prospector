@@ -42,8 +42,8 @@ export function getRuntimeConfig() {
     websiteEnrichmentTimeoutMs: Number(
       process.env.PROSPECTOR_WEBSITE_ENRICHMENT_TIMEOUT_MS || 3000
     ),
-    nightlyHour: Number(process.env.PROSPECTOR_NIGHTLY_HOUR || 2),
-    nightlyMinute: Number(process.env.PROSPECTOR_NIGHTLY_MINUTE || 30),
+    nightlyHour: Number(process.env.PROSPECTOR_NIGHTLY_HOUR || 4),
+    nightlyMinute: Number(process.env.PROSPECTOR_NIGHTLY_MINUTE || 0),
     timezone: process.env.PROSPECTOR_TIMEZONE || "Europe/Paris",
     host: process.env.PROSPECTOR_HOST || "0.0.0.0",
     port: Number(process.env.PROSPECTOR_PORT || 4174),
