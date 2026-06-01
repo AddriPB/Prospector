@@ -161,7 +161,6 @@ export default function App() {
       <section className="metrics">
         <Metric label="Prospects en BDD" value={dashboard?.summary?.totalProspects ?? "-"} />
         <Metric label="Nouveaux aujourd'hui" value={dashboard?.summary?.newToday ?? "-"} />
-        <Metric label="Objectif campagne" value={dashboard?.summary?.targetCount ?? "-"} />
       </section>
 
       <section className="content-grid">
@@ -198,15 +197,20 @@ export default function App() {
                 {prospects.map((prospect) => (
                   <tr key={prospect.id}>
                     <td className="score">{prospect.score}</td>
-                    <td>
+                    <td className="prospect-cell">
                       <strong>{prospect.name}</strong>
                       <span>{[prospect.address, prospect.city].filter(Boolean).join(" - ")}</span>
+                      {prospect.website ? (
+                        <a className="prospect-site" href={normalizeHref(prospect.website)} target="_blank" rel="noreferrer">
+                          {prospect.website}
+                        </a>
+                      ) : null}
                     </td>
                     <td>
                       <ContactList prospect={prospect} />
                     </td>
-                    <td>{(prospect.sources || []).join(", ") || "-"}</td>
-                    <td>{(prospect.scoreReasons || []).join(" ")}</td>
+                    <td className="compact-text">{(prospect.sources || []).join(", ") || "-"}</td>
+                    <td className="compact-text reasons-text">{(prospect.scoreReasons || []).join(" ")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -232,7 +236,7 @@ function ContactList({ prospect }) {
   const contacts = [
     prospect.email ? { label: "Email", value: prospect.email, href: `mailto:${prospect.email}` } : null,
     prospect.phone ? { label: "Tel", value: prospect.phone, href: `tel:${prospect.phone}` } : null,
-    prospect.website ? { label: "Site", value: prospect.website, href: prospect.website } : null,
+    prospect.website ? { label: "Site", value: prospect.website, href: normalizeHref(prospect.website) } : null,
     ...(prospect.social || []).map((url) => ({ label: "Social", value: url, href: url }))
   ].filter(Boolean);
 
@@ -249,6 +253,11 @@ function ContactList({ prospect }) {
       ))}
     </ul>
   );
+}
+
+function normalizeHref(url) {
+  if (!url) return "";
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 
 function createApi(apiBase) {
