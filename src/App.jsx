@@ -261,7 +261,7 @@ export default function App() {
                   <th>Secteur</th>
                   <th>Prospect</th>
                   <th>Contacts</th>
-                  <th>Sources</th>
+                  <th>Site</th>
                   <th>Etat</th>
                 </tr>
               </thead>
@@ -282,7 +282,15 @@ export default function App() {
                     <td>
                       <ContactList prospect={prospect} />
                     </td>
-                    <td className="compact-text">{(prospect.sources || []).join(", ") || "-"}</td>
+                    <td className="compact-text">
+                      {prospect.website ? (
+                        <a href={normalizeHref(prospect.website)} target="_blank" rel="noreferrer">
+                          {prospect.website}
+                        </a>
+                      ) : (
+                        <span className="muted">-</span>
+                      )}
+                    </td>
                     <td>
                       <select
                         className="status-select"
@@ -324,7 +332,6 @@ function ContactList({ prospect }) {
   const contacts = [
     prospect.email ? { label: "Email", value: prospect.email, href: `mailto:${prospect.email}` } : null,
     prospect.phone ? { label: "Tel", value: prospect.phone, href: `tel:${prospect.phone}` } : null,
-    prospect.website ? { label: "Site", value: prospect.website, href: normalizeHref(prospect.website) } : null,
     ...(prospect.social || []).map((url) => ({ label: "Social", value: url, href: url }))
   ].filter(Boolean);
 

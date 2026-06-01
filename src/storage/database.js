@@ -256,6 +256,8 @@ export function getCampaignResults(connection, campaignId) {
   return all(
     connection.db,
     `SELECT
+      c.id AS campaign_id,
+      c.sector AS campaign_sector,
       p.*,
       cp.score,
       cp.score_reasons_json,
@@ -264,6 +266,7 @@ export function getCampaignResults(connection, campaignId) {
       cp.last_seen_at
     FROM campaign_prospects cp
     JOIN prospects p ON p.id = cp.prospect_id
+    JOIN campaigns c ON c.id = cp.campaign_id
     WHERE cp.campaign_id = ?
     ORDER BY cp.score DESC, p.name ASC`,
     [campaignId]
@@ -276,43 +279,55 @@ export function getCampaignResults(connection, campaignId) {
   }));
 }
 
-export function getDashboardState(connection, campaignId) {
-  const prospects = getCampaignResults(connection, campaignId);
-  const campaign = get(
-    connection.db,
-    `SELECT id, name, business_type, sector, target_count, last_run_at
-     FROM campaigns
-     WHERE id = ?`,
-    [campaignId]
-  );
-  const campaignSector = campaign?.sector || DEFAULT_SECTOR;
+export function getDashboardState(connection, campaignId = null) {
+  const prospects = campaignId
+    ? getCampaignResults(connection, campaignId)
+    : getAllCampaignResults(connection);
+  const campaigns = campaignId
+    ? [
+        get(
+          connection.db,
+          `SELECT id, name, business_type, sector, target_count, last_run_at
+           FROM campaigns
+           WHERE id = ?`,
+          [campaignId]
+        )
+      ].filter(Boolean)
+    : all(
+        connection.db,
+        `SELECT id, name, business_type, sector, target_count, last_run_at
+         FROM campaigns
+         ORDER BY id ASC`
+      );
+  const campaign = campaigns[0] || null;
   const newByDay = all(
     connection.db,
     `SELECT substr(first_seen_at, 1, 10) AS day, COUNT(*) AS count
      FROM campaign_prospects
-     WHERE campaign_id = ?
+     WHERE (? IS NULL OR campaign_id = ?)
      GROUP BY day
      ORDER BY day DESC
      LIMIT 14`,
-    [campaignId]
+    [campaignId, campaignId]
   );
   const today = new Date().toISOString().slice(0, 10);
   const newToday = Number(newByDay.find((row) => row.day === today)?.count || 0);
 
   return {
     campaign: campaign || null,
+    campaigns,
     summary: {
       totalProspects: prospects.length,
       newToday,
-      targetCount: Number(campaign?.target_count || 0),
-      latestRunAt: campaign?.last_run_at || null
+      targetCount: campaigns.reduce((sum, item) => sum + Number(item.target_count || 0), 0),
+      latestRunAt: latestDate(campaigns.map((item) => item.last_run_at))
     },
     newByDay,
     filters: {
       sectors: sectorOptions(),
       outreachStatuses: OUTREACH_STATUSES
     },
-    prospects: prospects.map((prospect) => toDashboardProspect(prospect, campaignSector))
+    prospects: prospects.map((prospect) => toDashboardProspect(prospect))
   };
 }
 
@@ -328,10 +343,36 @@ export function updateProspectOutreachStatus(connection, prospectId, outreachSta
   connection.persist();
 }
 
-function toDashboardProspect(row, sector) {
+function getAllCampaignResults(connection) {
+  return all(
+    connection.db,
+    `SELECT
+      c.id AS campaign_id,
+      c.sector AS campaign_sector,
+      p.*,
+      cp.score,
+      cp.score_reasons_json,
+      cp.message,
+      cp.first_seen_at,
+      cp.last_seen_at
+    FROM campaign_prospects cp
+    JOIN prospects p ON p.id = cp.prospect_id
+    JOIN campaigns c ON c.id = cp.campaign_id
+    ORDER BY cp.score DESC, p.name ASC`
+  ).map((row) => ({
+    ...row,
+    social: JSON.parse(row.social_json || "[]"),
+    sources: JSON.parse(row.sources_json || "[]"),
+    sourceRecords: JSON.parse(row.source_records_json || "[]"),
+    scoreReasons: JSON.parse(row.score_reasons_json || "[]")
+  }));
+}
+
+function toDashboardProspect(row) {
   return {
     id: row.id,
-    sector,
+    campaignId: row.campaign_id,
+    sector: row.campaign_sector || DEFAULT_SECTOR,
     name: row.name,
     city: row.city,
     address: row.address,
@@ -353,6 +394,10 @@ function toDashboardProspect(row, sector) {
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at
   };
+}
+
+function latestDate(values) {
+  return values.filter(Boolean).sort().at(-1) || null;
 }
 
 function run(db, sql, params = []) {

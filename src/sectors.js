@@ -45,7 +45,7 @@ export const SECTORS = {
     overpassQueries: [
       { key: "amenity", regex: "^(restaurant|fast_food|cafe|bar|pub)$" },
       { key: "shop", regex: "^(bakery|pastry|deli)$" },
-      { key: "cuisine" }
+      { key: "tourism", value: "restaurant" }
     ],
     noWebsiteAngle:
       "Je n'ai pas trouve de site web clair pour votre restaurant, ce qui peut faire perdre des reservations et des demandes locales."
@@ -77,9 +77,10 @@ export const SECTORS = {
       {
         key: "craft",
         regex:
-          "^(builder|carpenter|electrician|glaziery|hvac|insulation|mason|painter|plasterer|plumber|roofer|tiler|window_construction)$"
+          "^(builder|carpenter|electrician|glaziery|handicraft|hvac|insulation|joiner|locksmith|mason|painter|plasterer|plumber|roofer|tiler|window_construction)$"
       },
-      { key: "shop", regex: "^(doityourself|hardware|trade)$" }
+      { key: "shop", regex: "^(doityourself|electrical|hardware|paint|trade)$" },
+      { key: "office", regex: "^(architect|construction_company|electrician|estate_agent)$" }
     ],
     noWebsiteAngle:
       "Je n'ai pas trouve de site web clair pour votre activite, ce qui peut faire perdre des demandes locales de chantiers ou depannages."

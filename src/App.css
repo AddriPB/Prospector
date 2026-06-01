@@ -99,9 +99,10 @@ label {
 }
 
 .app-shell {
-  width: min(100%, 1260px);
+  width: 100%;
+  max-width: 1680px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 20px clamp(16px, 2vw, 32px);
 }
 
 .app-header,
@@ -159,7 +160,7 @@ h2 {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin: 24px 0;
 }
@@ -176,7 +177,7 @@ h2 {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -216,7 +217,7 @@ h2 {
 
 table {
   width: 100%;
-  min-width: 900px;
+  min-width: 1040px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -241,16 +242,21 @@ td:nth-child(2) {
 
 th:nth-child(3),
 td:nth-child(3) {
-  width: 220px;
+  width: 270px;
 }
 
 th:nth-child(4),
 td:nth-child(4) {
-  width: 180px;
+  width: 170px;
 }
 
 th:nth-child(5),
 td:nth-child(5) {
+  width: 260px;
+}
+
+th:nth-child(6),
+td:nth-child(6) {
   width: 150px;
 }
 
@@ -300,6 +306,11 @@ td span {
 .contacts a {
   color: #1f5c4d;
   font-weight: 900;
+}
+
+.compact-text a {
+  color: #1f5c4d;
+  font-weight: 800;
 }
 
 .compact-text {

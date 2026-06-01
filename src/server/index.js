@@ -1,7 +1,9 @@
 import express from "express";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCampaign } from "../campaign/runCampaign.js";
+import { loadJsonFile } from "../config.js";
 import {
   openDatabase,
   getDashboardState,
@@ -16,6 +18,7 @@ const OUTREACH_STATUS_SET = new Set(OUTREACH_STATUSES);
 
 export async function startServer(campaign, runtimeConfig) {
   const app = express();
+  const dashboardCampaigns = loadConfiguredCampaigns(campaign);
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb" }));
 
@@ -44,7 +47,7 @@ export async function startServer(campaign, runtimeConfig) {
     try {
       const db = await openDatabase(runtimeConfig.dbPath);
       try {
-        res.json(getDashboardState(db, campaign.id));
+        res.json(getDashboardState(db));
       } finally {
         db.close();
       }
@@ -55,12 +58,25 @@ export async function startServer(campaign, runtimeConfig) {
 
   app.post("/api/campaign/run", requireAuth, async (_req, res, next) => {
     try {
-      const result = await runCampaign(campaign, runtimeConfig);
+      const results = [];
+      for (const dashboardCampaign of dashboardCampaigns) {
+        results.push(await runCampaign(dashboardCampaign, runtimeConfig));
+      }
       res.json({
         ok: true,
-        collected: result.collected,
-        qualified: result.qualified,
-        collectionErrors: result.collectionErrors
+        collected: results.reduce((sum, result) => sum + result.collected, 0),
+        qualified: results.reduce((sum, result) => sum + result.qualified, 0),
+        collectionErrors: results.flatMap((result, index) =>
+          result.collectionErrors.map((error) => ({
+            ...error,
+            campaign: dashboardCampaigns[index].id
+          }))
+        ),
+        campaigns: results.map((result, index) => ({
+          id: dashboardCampaigns[index].id,
+          collected: result.collected,
+          qualified: result.qualified
+        }))
       });
     } catch (error) {
       next(error);
@@ -108,4 +124,17 @@ export async function startServer(campaign, runtimeConfig) {
       resolve(server);
     });
   });
+}
+
+function loadConfiguredCampaigns(fallbackCampaign) {
+  const campaignDir = path.join(projectRoot, "config/campaigns");
+  if (!fs.existsSync(campaignDir)) return [fallbackCampaign];
+
+  const campaigns = fs
+    .readdirSync(campaignDir)
+    .filter((file) => file.endsWith(".json"))
+    .sort()
+    .map((file) => loadJsonFile(path.join("config/campaigns", file)));
+
+  return campaigns.length ? campaigns : [fallbackCampaign];
 }

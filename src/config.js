@@ -37,7 +37,7 @@ export function getRuntimeConfig() {
       .split(",")
       .map((endpoint) => endpoint.trim())
       .filter(Boolean),
-    overpassTimeoutMs: Number(process.env.PROSPECTOR_OVERPASS_TIMEOUT_MS || 15000),
+    overpassTimeoutMs: Number(process.env.PROSPECTOR_OVERPASS_TIMEOUT_MS || 25000),
     websiteEnrichmentLimit: Number(process.env.PROSPECTOR_WEBSITE_ENRICHMENT_LIMIT || 10),
     websiteEnrichmentTimeoutMs: Number(
       process.env.PROSPECTOR_WEBSITE_ENRICHMENT_TIMEOUT_MS || 3000
