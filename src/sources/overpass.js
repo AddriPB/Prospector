@@ -2,14 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureDir, resolveProjectPath } from "../config.js";
 import { normalizeSourceRecord } from "../normalize/prospect.js";
+import { getCampaignSector } from "../sectors.js";
 import { stableHash } from "../utils/hash.js";
 
 const OVERPASS_TAG_QUERY = `
 [out:json][timeout:45];
 (
-  nwr["shop"~"^(car|car_repair|tyres)$"](around:{{radius}},{{lat}},{{lon}});
-  nwr["craft"~"^(car_repair|mechanic)$"](around:{{radius}},{{lat}},{{lon}});
-  nwr["amenity"="car_wash"](around:{{radius}},{{lat}},{{lon}});
+{{tagQueries}}
 );
 out center tags;
 `;
@@ -17,9 +16,10 @@ out center tags;
 export async function collectOverpass(campaign, runtimeConfig) {
   if (!campaign.sources?.overpass?.enabled) return [];
 
+  const sector = getCampaignSector(campaign);
   ensureDir(runtimeConfig.cacheDir);
   const cacheKey = stableHash(
-    `${campaign.id}:${campaign.center.lat}:${campaign.center.lon}:${campaign.radiusMeters}:overpass`
+    `${campaign.id}:${sector.id}:${campaign.center.lat}:${campaign.center.lon}:${campaign.radiusMeters}:overpass`
   );
   const cachePath = resolveProjectPath(
     path.join(runtimeConfig.cacheDir, `${cacheKey}.overpass.json`)
@@ -29,12 +29,7 @@ export async function collectOverpass(campaign, runtimeConfig) {
   if (fs.existsSync(cachePath)) {
     payload = JSON.parse(fs.readFileSync(cachePath, "utf8"));
   } else {
-    const query = OVERPASS_TAG_QUERY.replaceAll(
-      "{{radius}}",
-      String(campaign.radiusMeters)
-    )
-      .replaceAll("{{lat}}", String(campaign.center.lat))
-      .replaceAll("{{lon}}", String(campaign.center.lon));
+    const query = buildOverpassQuery(campaign);
 
     payload = await fetchOverpass(query, runtimeConfig);
     fs.writeFileSync(cachePath, JSON.stringify(payload, null, 2));
@@ -71,6 +66,24 @@ export async function collectOverpass(campaign, runtimeConfig) {
 }
 
 collectOverpass.sourceName = "overpass";
+
+export function buildOverpassQuery(campaign) {
+  const sector = getCampaignSector(campaign);
+  const tagQueries = sector.overpassQueries
+    .map((query) => `  ${formatOverpassTagQuery(query)}(around:{{radius}},{{lat}},{{lon}});`)
+    .join("\n");
+
+  return OVERPASS_TAG_QUERY.replace("{{tagQueries}}", tagQueries)
+    .replaceAll("{{radius}}", String(campaign.radiusMeters))
+    .replaceAll("{{lat}}", String(campaign.center.lat))
+    .replaceAll("{{lon}}", String(campaign.center.lon));
+}
+
+function formatOverpassTagQuery(query) {
+  if (query.regex) return `nwr["${query.key}"~"${query.regex}"]`;
+  if (query.value) return `nwr["${query.key}"="${query.value}"]`;
+  return `nwr["${query.key}"]`;
+}
 
 async function fetchOverpass(query, runtimeConfig) {
   const endpoints = [

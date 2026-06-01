@@ -20,7 +20,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
   font-size: 16px;
 }
@@ -46,11 +47,24 @@ button.secondary {
   color: #18211b;
 }
 
-input {
+input,
+select {
   width: 100%;
   border: 1px solid #cbd5c1;
   border-radius: 8px;
   padding: 11px 12px;
+}
+
+select {
+  min-width: 150px;
+  background: #fff;
+  color: #18211b;
+  cursor: pointer;
+}
+
+select:disabled {
+  opacity: 0.7;
+  cursor: progress;
 }
 
 label {
@@ -92,7 +106,8 @@ label {
 
 .app-header,
 .section-header,
-.actions {
+.actions,
+.filters {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -183,6 +198,16 @@ h2 {
   min-width: 0;
 }
 
+.filters {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.filters label {
+  width: min(100%, 240px);
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -211,16 +236,21 @@ td:nth-child(1) {
 
 th:nth-child(2),
 td:nth-child(2) {
-  width: 220px;
+  width: 130px;
 }
 
 th:nth-child(3),
 td:nth-child(3) {
-  width: 180px;
+  width: 220px;
 }
 
 th:nth-child(4),
 td:nth-child(4) {
+  width: 180px;
+}
+
+th:nth-child(5),
+td:nth-child(5) {
   width: 150px;
 }
 
@@ -279,11 +309,8 @@ td span {
   overflow-wrap: anywhere;
 }
 
-.reasons-text {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+.status-select {
+  font-weight: 800;
 }
 
 .empty {

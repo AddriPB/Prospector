@@ -2,11 +2,17 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCampaign } from "../campaign/runCampaign.js";
-import { openDatabase, getDashboardState } from "../storage/database.js";
+import {
+  openDatabase,
+  getDashboardState,
+  updateProspectOutreachStatus
+} from "../storage/database.js";
+import { OUTREACH_STATUSES } from "../outreachStatus.js";
 import { loginHandler, logoutHandler, meHandler, requireAuth } from "./auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
+const OUTREACH_STATUS_SET = new Set(OUTREACH_STATUSES);
 
 export async function startServer(campaign, runtimeConfig) {
   const app = express();
@@ -20,7 +26,7 @@ export async function startServer(campaign, runtimeConfig) {
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
     }
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
@@ -56,6 +62,29 @@ export async function startServer(campaign, runtimeConfig) {
         qualified: result.qualified,
         collectionErrors: result.collectionErrors
       });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/prospects/:id/status", requireAuth, async (req, res, next) => {
+    const prospectId = Number(req.params.id);
+    const outreachStatus = String(req.body?.outreachStatus || "");
+    if (!Number.isInteger(prospectId) || prospectId <= 0) {
+      return res.status(400).json({ error: "invalid_prospect_id" });
+    }
+    if (!OUTREACH_STATUS_SET.has(outreachStatus)) {
+      return res.status(400).json({ error: "invalid_outreach_status" });
+    }
+
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        updateProspectOutreachStatus(db, prospectId, outreachStatus);
+        res.json({ ok: true, outreachStatus });
+      } finally {
+        db.close();
+      }
     } catch (error) {
       next(error);
     }

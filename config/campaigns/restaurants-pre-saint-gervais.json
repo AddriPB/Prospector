@@ -1,8 +1,8 @@
 {
-  "id": "campaign-001-garages-pre-saint-gervais",
-  "name": "Campagne 001 - Garages automobiles autour du Pre-Saint-Gervais",
-  "sector": "automotive",
-  "businessType": "garages automobiles",
+  "id": "campaign-002-restaurants-pre-saint-gervais",
+  "name": "Campagne 002 - Restaurants autour du Pre-Saint-Gervais",
+  "sector": "restaurants",
+  "businessType": "restaurants",
   "targetCount": 50,
   "center": {
     "lat": 48.8847,

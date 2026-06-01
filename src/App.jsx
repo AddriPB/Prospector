@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { OUTREACH_STATUSES } from "./outreachStatus.js";
+import { sectorOptions } from "./sectors.js";
 
 const SESSION_TOKEN_KEY = "prospector_session_token";
 const DEFAULT_API_BASE = String(import.meta.env.VITE_PUBLIC_API_BASE || "").replace(
@@ -13,9 +15,21 @@ export default function App() {
   const [dashboard, setDashboard] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
+  const [statusSaving, setStatusSaving] = useState({});
+  const [sectorFilter, setSectorFilter] = useState("all");
+  const [outreachStatusFilter, setOutreachStatusFilter] = useState("all");
 
   const api = useMemo(() => createApi(DEFAULT_API_BASE), []);
   const prospects = dashboard?.prospects || [];
+  const sectors = dashboard?.filters?.sectors || sectorOptions();
+  const outreachStatuses = dashboard?.filters?.outreachStatuses || OUTREACH_STATUSES;
+  const filteredProspects = prospects.filter((prospect) => {
+    const matchesSector = sectorFilter === "all" || prospect.sector === sectorFilter;
+    const matchesOutreachStatus =
+      outreachStatusFilter === "all" ||
+      (prospect.outreachStatus || "A contacter") === outreachStatusFilter;
+    return matchesSector && matchesOutreachStatus;
+  });
 
   useEffect(() => {
     api("/api/auth/me")
@@ -96,6 +110,31 @@ export default function App() {
       setMessage(apiErrorMessage(error, "Impossible de lancer la collecte."));
     } finally {
       setRunLoading(false);
+    }
+  }
+
+  async function updateOutreachStatus(prospectId, outreachStatus) {
+    const previousStatus = prospects.find((prospect) => prospect.id === prospectId)?.outreachStatus;
+    setDashboard((current) => updateDashboardProspectStatus(current, prospectId, outreachStatus));
+    setStatusSaving((current) => ({ ...current, [prospectId]: true }));
+    setMessage("");
+
+    try {
+      await api(`/api/prospects/${prospectId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ outreachStatus })
+      });
+    } catch (error) {
+      if (previousStatus) {
+        setDashboard((current) => updateDashboardProspectStatus(current, prospectId, previousStatus));
+      }
+      setMessage(apiErrorMessage(error, "Impossible de modifier l'etat."));
+    } finally {
+      setStatusSaving((current) => {
+        const next = { ...current };
+        delete next[prospectId];
+        return next;
+      });
     }
   }
 
@@ -180,23 +219,57 @@ export default function App() {
         <article className="panel prospects-panel">
           <div className="section-header">
             <h2>Prospects et contacts</h2>
-            <span>{prospects.length} lignes</span>
+            <span>
+              {filteredProspects.length} / {prospects.length} lignes
+            </span>
+          </div>
+          <div className="filters">
+            <label>
+              Secteur
+              <select
+                value={sectorFilter}
+                onChange={(event) => setSectorFilter(event.target.value)}
+              >
+                <option value="all">Tous les secteurs</option>
+                {sectors.map((sector) => (
+                  <option key={sector.id} value={sector.id}>
+                    {sector.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Etat commercial
+              <select
+                value={outreachStatusFilter}
+                onChange={(event) => setOutreachStatusFilter(event.target.value)}
+              >
+                <option value="all">Tous les etats</option>
+                {outreachStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Score</th>
+                  <th>Secteur</th>
                   <th>Prospect</th>
                   <th>Contacts</th>
                   <th>Sources</th>
-                  <th>Raisons</th>
+                  <th>Etat</th>
                 </tr>
               </thead>
               <tbody>
-                {prospects.map((prospect) => (
+                {filteredProspects.map((prospect) => (
                   <tr key={prospect.id}>
                     <td className="score">{prospect.score}</td>
+                    <td>{sectorLabel(prospect.sector, sectors)}</td>
                     <td className="prospect-cell">
                       <strong>{prospect.name}</strong>
                       <span>{[prospect.address, prospect.city].filter(Boolean).join(" - ")}</span>
@@ -210,12 +283,27 @@ export default function App() {
                       <ContactList prospect={prospect} />
                     </td>
                     <td className="compact-text">{(prospect.sources || []).join(", ") || "-"}</td>
-                    <td className="compact-text reasons-text">{(prospect.scoreReasons || []).join(" ")}</td>
+                    <td>
+                      <select
+                        className="status-select"
+                        value={prospect.outreachStatus || "A contacter"}
+                        disabled={Boolean(statusSaving[prospect.id])}
+                        onChange={(event) =>
+                          updateOutreachStatus(prospect.id, event.target.value)
+                        }
+                      >
+                        {outreachStatuses.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!prospects.length ? <p className="muted empty">Aucun prospect en BDD.</p> : null}
+            {!filteredProspects.length ? <p className="muted empty">Aucun prospect.</p> : null}
           </div>
         </article>
       </section>
@@ -253,6 +341,20 @@ function ContactList({ prospect }) {
       ))}
     </ul>
   );
+}
+
+function updateDashboardProspectStatus(dashboard, prospectId, outreachStatus) {
+  if (!dashboard) return dashboard;
+  return {
+    ...dashboard,
+    prospects: (dashboard.prospects || []).map((prospect) =>
+      prospect.id === prospectId ? { ...prospect, outreachStatus } : prospect
+    )
+  };
+}
+
+function sectorLabel(sectorId, sectors) {
+  return sectors.find((sector) => sector.id === sectorId)?.label || sectorId || "-";
 }
 
 function normalizeHref(url) {

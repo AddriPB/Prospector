@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { runCampaign } from "../src/campaign/runCampaign.js";
 import { normalizeSourceRecord } from "../src/normalize/prospect.js";
+import {
+  getDashboardState,
+  openDatabase,
+  updateProspectOutreachStatus
+} from "../src/storage/database.js";
 
 test("pipeline campagne avec fixtures, SQLite et exports", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-"));
@@ -41,4 +46,18 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
   assert.equal(result.rows[0].qualification_state, "priority");
   assert.equal(fs.existsSync(result.exportPaths.csvPath), true);
   assert.equal(fs.existsSync(result.exportPaths.markdownPath), true);
+
+  const db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const dashboard = getDashboardState(db, campaign.id);
+    assert.equal(dashboard.campaign.sector, "automotive");
+    assert.equal(dashboard.prospects[0].sector, "automotive");
+    assert.equal(dashboard.prospects[0].outreachStatus, "A contacter");
+
+    updateProspectOutreachStatus(db, dashboard.prospects[0].id, "Contacté");
+    const updatedDashboard = getDashboardState(db, campaign.id);
+    assert.equal(updatedDashboard.prospects[0].outreachStatus, "Contacté");
+  } finally {
+    db.close();
+  }
 });

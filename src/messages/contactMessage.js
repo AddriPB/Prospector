@@ -1,7 +1,10 @@
+import { getCampaignSector } from "../sectors.js";
+
 export function buildContactMessage(prospect, campaign, scoreResult) {
+  const sector = getCampaignSector(campaign);
   const webAngle = prospect.website
     ? "J'ai vu votre presence en ligne et je pense qu'un site plus simple a comprendre peut aider vos clients a trouver rapidement vos services, horaires et moyens de contact."
-    : "Je n'ai pas trouve de site web clair pour votre garage, ce qui peut faire perdre des demandes locales a des clients qui cherchent rapidement un professionnel auto.";
+    : sector.noWebsiteAngle;
 
   return [
     `Bonjour ${prospect.name},`,

@@ -1,8 +1,8 @@
 {
-  "id": "campaign-001-garages-pre-saint-gervais",
-  "name": "Campagne 001 - Garages automobiles autour du Pre-Saint-Gervais",
-  "sector": "automotive",
-  "businessType": "garages automobiles",
+  "id": "campaign-003-artisans-batiment-pre-saint-gervais",
+  "name": "Campagne 003 - Artisans batiment autour du Pre-Saint-Gervais",
+  "sector": "building_trades",
+  "businessType": "artisans batiment",
   "targetCount": 50,
   "center": {
     "lat": 48.8847,

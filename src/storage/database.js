@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import initSqlJs from "sql.js";
 import { ensureDir, resolveProjectPath } from "../config.js";
+import { DEFAULT_SECTOR, getCampaignSector, sectorOptions } from "../sectors.js";
+import { OUTREACH_STATUSES } from "../outreachStatus.js";
 
 export async function openDatabase(dbPath) {
   ensureDir(path.dirname(dbPath));
@@ -32,6 +34,7 @@ export function migrate(db) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       business_type TEXT NOT NULL,
+      sector TEXT NOT NULL DEFAULT 'automotive',
       target_count INTEGER NOT NULL,
       created_at TEXT NOT NULL,
       last_run_at TEXT
@@ -56,6 +59,7 @@ export function migrate(db) {
       confidence TEXT NOT NULL DEFAULT 'low',
       contactability TEXT NOT NULL DEFAULT 'none',
       qualification_state TEXT NOT NULL DEFAULT 'discovered',
+      outreach_status TEXT NOT NULL DEFAULT 'A contacter',
       raw_json TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL
     );
@@ -102,6 +106,18 @@ export function migrate(db) {
     "qualification_state",
     "TEXT NOT NULL DEFAULT 'discovered'"
   );
+  addColumnIfMissing(
+    db,
+    "prospects",
+    "outreach_status",
+    "TEXT NOT NULL DEFAULT 'A contacter'"
+  );
+  addColumnIfMissing(
+    db,
+    "campaigns",
+    "sector",
+    `TEXT NOT NULL DEFAULT '${DEFAULT_SECTOR}'`
+  );
 }
 
 export function saveCampaignRun(connection, campaign, prospects) {
@@ -112,14 +128,23 @@ export function saveCampaignRun(connection, campaign, prospects) {
   try {
     run(
       db,
-      `INSERT INTO campaigns (id, name, business_type, target_count, created_at, last_run_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO campaigns (id, name, business_type, sector, target_count, created_at, last_run_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         business_type = excluded.business_type,
+        sector = excluded.sector,
         target_count = excluded.target_count,
         last_run_at = excluded.last_run_at`,
-      [campaign.id, campaign.name, campaign.businessType, campaign.targetCount, now, now]
+      [
+        campaign.id,
+        campaign.name,
+        campaign.businessType,
+        getCampaignSector(campaign).id,
+        campaign.targetCount,
+        now,
+        now
+      ]
     );
 
     for (const prospect of prospects) {
@@ -128,9 +153,9 @@ export function saveCampaignRun(connection, campaign, prospects) {
         `INSERT INTO prospects (
           dedupe_key, name, address, city, lat, lon, website, phone, email,
           social_json, sources_json, source_records_json, source_url, collected_at,
-          confidence, contactability, qualification_state, raw_json, updated_at
+          confidence, contactability, qualification_state, outreach_status, raw_json, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(dedupe_key) DO UPDATE SET
           name = excluded.name,
           address = COALESCE(excluded.address, prospects.address),
@@ -168,6 +193,7 @@ export function saveCampaignRun(connection, campaign, prospects) {
           prospect.confidence || "low",
           prospect.contactability || "none",
           prospect.qualificationState || "discovered",
+          prospect.outreachStatus || "A contacter",
           JSON.stringify(prospect.raw || {}),
           now
         ]
@@ -254,11 +280,12 @@ export function getDashboardState(connection, campaignId) {
   const prospects = getCampaignResults(connection, campaignId);
   const campaign = get(
     connection.db,
-    `SELECT id, name, business_type, target_count, last_run_at
+    `SELECT id, name, business_type, sector, target_count, last_run_at
      FROM campaigns
      WHERE id = ?`,
     [campaignId]
   );
+  const campaignSector = campaign?.sector || DEFAULT_SECTOR;
   const newByDay = all(
     connection.db,
     `SELECT substr(first_seen_at, 1, 10) AS day, COUNT(*) AS count
@@ -281,13 +308,30 @@ export function getDashboardState(connection, campaignId) {
       latestRunAt: campaign?.last_run_at || null
     },
     newByDay,
-    prospects: prospects.map(toDashboardProspect)
+    filters: {
+      sectors: sectorOptions(),
+      outreachStatuses: OUTREACH_STATUSES
+    },
+    prospects: prospects.map((prospect) => toDashboardProspect(prospect, campaignSector))
   };
 }
 
-function toDashboardProspect(row) {
+export function updateProspectOutreachStatus(connection, prospectId, outreachStatus) {
+  const now = new Date().toISOString();
+  run(
+    connection.db,
+    `UPDATE prospects
+     SET outreach_status = ?, updated_at = ?
+     WHERE id = ?`,
+    [outreachStatus, now, prospectId]
+  );
+  connection.persist();
+}
+
+function toDashboardProspect(row, sector) {
   return {
     id: row.id,
+    sector,
     name: row.name,
     city: row.city,
     address: row.address,
@@ -303,6 +347,7 @@ function toDashboardProspect(row) {
     confidence: row.confidence,
     contactability: row.contactability,
     qualificationState: row.qualification_state,
+    outreachStatus: row.outreach_status || "A contacter",
     scoreReasons: row.scoreReasons,
     message: row.message,
     firstSeenAt: row.first_seen_at,

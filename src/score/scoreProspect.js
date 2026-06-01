@@ -1,26 +1,18 @@
 import { normalizeKey } from "../utils/text.js";
-
-const TARGET_TERMS = [
-  "garage",
-  "auto",
-  "automobile",
-  "carrosserie",
-  "mecanique",
-  "pneu",
-  "controle-technique"
-];
+import { getCampaignSector } from "../sectors.js";
 
 export function scoreProspect(prospect, campaign) {
+  const sector = getCampaignSector(campaign);
   let score = 0;
   const reasons = [];
   const nameKey = normalizeKey(`${prospect.name} ${prospect.evidence?.join(" ")}`);
 
-  if (TARGET_TERMS.some((term) => nameKey.includes(term))) {
+  if (sector.targetTerms.some((term) => nameKey.includes(normalizeKey(term)))) {
     score += 25;
-    reasons.push("Metier automobile confirme par le nom ou les preuves.");
+    reasons.push(`${sector.businessMatchLabel} confirme par le nom ou les preuves.`);
   } else {
     score -= 20;
-    reasons.push("Metier automobile encore ambigu.");
+    reasons.push(`${sector.ambiguousLabel} encore ambigu.`);
   }
 
   if (campaign.cities.some((city) => normalizeKey(city) === normalizeKey(prospect.city))) {
