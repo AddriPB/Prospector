@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import initSqlJs from "sql.js";
 import { ensureDir, resolveProjectPath } from "../config.js";
-import { DEFAULT_COMMERCIAL_SCRIPTS } from "../commercialScripts.js";
+import {
+  COMMERCIAL_SCRIPT_SECTOR_IDS,
+  DEFAULT_COMMERCIAL_SCRIPTS,
+  LEGACY_DEFAULT_COMMERCIAL_SCRIPTS
+} from "../commercialScripts.js";
 import {
   computeDedupeCandidates,
   normalizeDomain,
@@ -166,7 +170,9 @@ export function migrate(db) {
   addColumnIfMissing(db, "campaign_prospects", "scoring_recalculated_at", "TEXT");
 
   db.run("UPDATE prospects SET outreach_status = 'Décliné' WHERE outreach_status = 'Contacté'");
+  migrateLegacyCommercialScriptSectors(db);
   seedCommercialScripts(db);
+  refreshUnmodifiedCommercialScriptDefaults(db);
 
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_campaign_prospects_score
@@ -659,12 +665,17 @@ function toDashboardProspect(row) {
 }
 
 function getCommercialScripts(connection) {
+  const orderSql = COMMERCIAL_SCRIPT_SECTOR_IDS
+    .map((sectorId, index) => `WHEN '${sectorId}' THEN ${index}`)
+    .join(" ");
   return all(
     connection.db,
     `SELECT sector_id, sector_label, sms_hook, call_angle, common_objection,
       short_answer, commercial_offer, follow_up_j3, follow_up_j7, updated_at
      FROM commercial_scripts
-     ORDER BY sector_label ASC`
+     WHERE sector_id IN (${COMMERCIAL_SCRIPT_SECTOR_IDS.map(() => "?").join(", ")})
+     ORDER BY CASE sector_id ${orderSql} ELSE 999 END`,
+    COMMERCIAL_SCRIPT_SECTOR_IDS
   ).map((row) => ({
     sectorId: row.sector_id,
     sectorLabel: row.sector_label,
@@ -677,6 +688,110 @@ function getCommercialScripts(connection) {
     followUpJ7: row.follow_up_j7,
     updatedAt: row.updated_at
   }));
+}
+
+function migrateLegacyCommercialScriptSectors(db) {
+  const migrations = [
+    { from: "restaurant", to: "restaurants", label: "Restaurants" },
+    { from: "artisan", to: "building_trades", label: "Artisans bâtiment" }
+  ];
+
+  for (const migration of migrations) {
+    const legacy = getCommercialScriptRow(db, migration.from);
+    if (!legacy) continue;
+
+    const target = getCommercialScriptRow(db, migration.to);
+    if (!target) {
+      run(
+        db,
+        `UPDATE commercial_scripts
+         SET sector_id = ?, sector_label = ?
+         WHERE sector_id = ?`,
+        [migration.to, migration.label, migration.from]
+      );
+      continue;
+    }
+
+    if (matchesCommercialScript(legacy, legacyDefaultFor(migration.from))) {
+      run(db, "DELETE FROM commercial_scripts WHERE sector_id = ?", [migration.from]);
+    }
+  }
+}
+
+function refreshUnmodifiedCommercialScriptDefaults(db) {
+  const legacyDefaultsByCurrentSector = new Map([
+    ["restaurants", legacyDefaultFor("restaurant")],
+    ["building_trades", legacyDefaultFor("artisan")]
+  ]);
+
+  for (const script of DEFAULT_COMMERCIAL_SCRIPTS) {
+    const current = getCommercialScriptRow(db, script.sectorId);
+    if (!current) continue;
+
+    const legacyDefault = legacyDefaultsByCurrentSector.get(script.sectorId);
+    const isCurrentDefault = matchesCommercialScript(current, script);
+    const isLegacyDefault = legacyDefault && matchesCommercialScript(current, legacyDefault);
+    if (!isCurrentDefault && !isLegacyDefault) continue;
+
+    writeCommercialScriptDefaults(db, script);
+  }
+}
+
+function getCommercialScriptRow(db, sectorId) {
+  return get(
+    db,
+    `SELECT sector_id, sector_label, sms_hook, call_angle, common_objection,
+      short_answer, commercial_offer, follow_up_j3, follow_up_j7, updated_at
+     FROM commercial_scripts
+     WHERE sector_id = ?`,
+    [sectorId]
+  );
+}
+
+function legacyDefaultFor(sectorId) {
+  return LEGACY_DEFAULT_COMMERCIAL_SCRIPTS.find((script) => script.sectorId === sectorId) || null;
+}
+
+function matchesCommercialScript(row, script) {
+  if (!row || !script) return false;
+  return (
+    row.sms_hook === script.smsHook &&
+    row.call_angle === script.callAngle &&
+    row.common_objection === script.commonObjection &&
+    row.short_answer === script.shortAnswer &&
+    row.commercial_offer === script.commercialOffer &&
+    row.follow_up_j3 === script.followUpJ3 &&
+    row.follow_up_j7 === script.followUpJ7
+  );
+}
+
+function writeCommercialScriptDefaults(db, script) {
+  run(
+    db,
+    `UPDATE commercial_scripts
+     SET sector_label = ?,
+         sms_hook = ?,
+         call_angle = ?,
+         common_objection = ?,
+         short_answer = ?,
+         commercial_offer = ?,
+         follow_up_j3 = ?,
+         follow_up_j7 = ?,
+         updated_at = ?
+     WHERE sector_id = ?`,
+    [
+      script.sectorLabel,
+      script.smsHook,
+      script.callAngle,
+      script.commonObjection,
+      script.shortAnswer,
+      script.commercialOffer,
+      script.followUpJ3,
+      script.followUpJ7,
+      new Date().toISOString(),
+      script.sectorId
+    ]
+  );
 }
 
 function seedCommercialScripts(db) {

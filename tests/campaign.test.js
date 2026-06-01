@@ -70,7 +70,24 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
     assert.equal(dashboard.citySegments[0].city, "Pantin");
     assert.equal(dashboard.citySegments[0].prospects, 1);
     assert.equal(dashboard.citySegments[0].contactable, 1);
-    assert.equal(dashboard.commercialScripts.length >= 6, true);
+    assert.deepEqual(
+      dashboard.commercialScripts.map((script) => script.sectorId),
+      ["automotive", "restaurants", "building_trades"]
+    );
+    assert.equal(
+      dashboard.commercialScripts.every((script) =>
+        [
+          script.smsHook,
+          script.callAngle,
+          script.commonObjection,
+          script.shortAnswer,
+          script.commercialOffer,
+          script.followUpJ3,
+          script.followUpJ7
+        ].every(Boolean)
+      ),
+      true
+    );
 
     assert.throws(
       () => updateProspectOutreachStatus(db, prospectsPage.items[0].id, "Décliné"),
@@ -81,7 +98,7 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
     assert.equal(updatedProspectsPage.items[0].outreachStatus, "Décliné");
     assert.equal(updatedProspectsPage.items[0].rejectionReason, "doublon");
 
-    const script = updateCommercialScript(db, "restaurant", {
+    const script = updateCommercialScript(db, "restaurants", {
       smsHook: "Nouvelle accroche"
     });
     assert.equal(script.smsHook, "Nouvelle accroche");
