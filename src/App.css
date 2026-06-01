@@ -59,7 +59,8 @@ textarea {
 
 textarea {
   min-height: 92px;
-  resize: vertical;
+  overflow: hidden;
+  resize: none;
 }
 
 select {

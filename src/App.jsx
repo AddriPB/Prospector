@@ -12,6 +12,12 @@ const DEFAULT_API_BASE = String(import.meta.env.VITE_PUBLIC_API_BASE || "").repl
   ""
 );
 
+function resizeTextarea(textarea) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -81,6 +87,11 @@ export default function App() {
     setScriptSectorId(current.sectorId);
     setScriptDraft(current);
   }, [commercialScripts, scriptSectorId]);
+
+  useEffect(() => {
+    if (activeTab !== "scripts") return;
+    document.querySelectorAll(".script-grid textarea").forEach(resizeTextarea);
+  }, [activeTab, scriptDraft]);
 
   async function login(event) {
     event.preventDefault();
@@ -461,13 +472,15 @@ export default function App() {
                 <label key={field.key}>
                   {field.label}
                   <textarea
+                    ref={resizeTextarea}
                     value={scriptDraft[field.key] || ""}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      resizeTextarea(event.currentTarget);
                       setScriptDraft((current) => ({
                         ...current,
                         [field.key]: event.target.value
-                      }))
-                    }
+                      }));
+                    }}
                     rows={3}
                   />
                 </label>
