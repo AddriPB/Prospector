@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 const SESSION_TOKEN_KEY = "prospector_session_token";
-const API_BASE_KEY = "prospector_api_base";
 const DEFAULT_API_BASE = String(import.meta.env.VITE_PUBLIC_API_BASE || "").replace(
   /\/$/,
   ""
 );
 
 export default function App() {
-  const [apiBase, setApiBase] = useState(readApiBase());
   const [authenticated, setAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -16,7 +14,7 @@ export default function App() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
 
-  const api = useMemo(() => createApi(apiBase), [apiBase]);
+  const api = useMemo(() => createApi(DEFAULT_API_BASE), []);
   const prospects = dashboard?.prospects || [];
 
   useEffect(() => {
@@ -38,11 +36,8 @@ export default function App() {
     event.preventDefault();
     setMessage("");
     const form = new FormData(event.currentTarget);
-    const nextApiBase = String(form.get("apiBase") || "").replace(/\/$/, "");
-    saveApiBase(nextApiBase);
-    setApiBase(nextApiBase);
     try {
-      const data = await createApi(nextApiBase)("/api/auth/login", {
+      const data = await api("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({
           username: String(form.get("username") || "").trim(),
@@ -113,15 +108,6 @@ export default function App() {
         <form className="panel login-panel" onSubmit={login}>
           <p className="eyebrow">Acces prive</p>
           <h1>Prospector</h1>
-          <label>
-            API
-            <input
-              name="apiBase"
-              defaultValue={apiBase}
-              placeholder="https://ton-api.example.com"
-              autoComplete="url"
-            />
-          </label>
           <label>
             Identifiant
             <input name="username" autoComplete="username" required />
@@ -289,23 +275,6 @@ function createApi(apiBase) {
   };
 }
 
-function readApiBase() {
-  try {
-    return window.localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE;
-  } catch {
-    return DEFAULT_API_BASE;
-  }
-}
-
-function saveApiBase(value) {
-  try {
-    if (value) window.localStorage.setItem(API_BASE_KEY, value);
-    else window.localStorage.removeItem(API_BASE_KEY);
-  } catch {
-    // The form value still works for the current session.
-  }
-}
-
 function saveSessionToken(token) {
   if (!token) return;
   try {
@@ -353,8 +322,14 @@ function loginErrorMessage(error) {
 }
 
 function apiErrorMessage(error, fallback) {
-  if (error.kind === "network") return "API injoignable. Verifie l'URL de l'API.";
-  return error.data?.error || error.data?.message || fallback;
+  if (error.kind === "network") {
+    return "API injoignable. Verifie VITE_PUBLIC_API_BASE dans .env puis rebuild le dashboard.";
+  }
+  const errorCode = error.data?.error;
+  if (errorCode === "internal_error") {
+    return "Erreur serveur. Regarde les logs du process Prospector pour le detail.";
+  }
+  return errorCode || error.data?.message || fallback;
 }
 
 class ApiError extends Error {
