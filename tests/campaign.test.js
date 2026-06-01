@@ -3,15 +3,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import initSqlJs from "sql.js";
 import { runCampaign } from "../src/campaign/runCampaign.js";
 import { recalculateScoringV2 } from "../src/migrations/recalculateScoringV2.js";
 import { normalizeSourceRecord } from "../src/normalize/prospect.js";
+import { OUTREACH_STATUSES } from "../src/outreachStatus.js";
 import {
   getDashboardState,
   getProspectPage,
   openDatabase,
   updateCommercialScript,
-  updateProspectOutreachStatus
+  updateProspectOutreachStatus,
+  updateProspectRejectionReason
 } from "../src/storage/database.js";
 
 test("pipeline campagne avec fixtures, SQLite et exports", async () => {
@@ -97,6 +100,9 @@ test("pipeline campagne avec fixtures, SQLite et exports", async () => {
     const updatedProspectsPage = getProspectPage(db, { campaignId: campaign.id });
     assert.equal(updatedProspectsPage.items[0].outreachStatus, "Décliné");
     assert.equal(updatedProspectsPage.items[0].rejectionReason, "doublon");
+    updateProspectRejectionReason(db, prospectsPage.items[0].id, "");
+    const clearedRejectionPage = getProspectPage(db, { campaignId: campaign.id });
+    assert.equal(clearedRejectionPage.items[0].rejectionReason, "");
 
     const script = updateCommercialScript(db, "restaurants", {
       smsHook: "Nouvelle accroche"
@@ -163,3 +169,187 @@ test("signale les doublons persistants sans supprimer de prospect", async () => 
     db.close();
   }
 });
+
+test("conserve les statuts commerciaux autorises apres migration et relance collecte", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "prospector-statuses-"));
+  const runtimeConfig = {
+    dbPath: path.join(tmp, "prospector.sqlite"),
+    exportDir: path.join(tmp, "exports"),
+    cacheDir: path.join(tmp, "cache")
+  };
+  const campaign = {
+    id: "status-campaign",
+    name: "Status Campaign",
+    businessType: "garages automobiles",
+    targetCount: 50,
+    cities: ["Pantin"],
+    localAngle: "Angle local.",
+    sources: {}
+  };
+  const fixtureRecords = [
+    normalizeSourceRecord({
+      source: "fixture",
+      sourceId: "1",
+      name: "Garage Statut Pantin",
+      city: "Pantin",
+      phone: "0102030405",
+      evidence: ["shop=car_repair"]
+    })
+  ];
+
+  await runCampaign(campaign, runtimeConfig, { fixtureRecords });
+
+  for (const outreachStatus of OUTREACH_STATUSES) {
+    let db = await openDatabase(runtimeConfig.dbPath);
+    try {
+      const page = getProspectPage(db, { campaignId: campaign.id });
+      const rejectionReason = outreachStatus === "Décliné" ? "doublon" : null;
+      updateProspectOutreachStatus(db, page.items[0].id, outreachStatus, rejectionReason);
+    } finally {
+      db.close();
+    }
+
+    db = await openDatabase(runtimeConfig.dbPath);
+    try {
+      const pageAfterReopen = getProspectPage(db, { campaignId: campaign.id });
+      assert.equal(pageAfterReopen.items[0].outreachStatus, outreachStatus);
+    } finally {
+      db.close();
+    }
+
+    await runCampaign(campaign, runtimeConfig, { fixtureRecords });
+
+    db = await openDatabase(runtimeConfig.dbPath);
+    try {
+      const dashboard = getDashboardState(db, campaign.id);
+      const pageAfterCollection = getProspectPage(db, { campaignId: campaign.id });
+      assert.deepEqual(dashboard.filters.outreachStatuses, OUTREACH_STATUSES);
+      assert.equal(pageAfterCollection.items[0].outreachStatus, outreachStatus);
+    } finally {
+      db.close();
+    }
+  }
+
+  const db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const page = getProspectPage(db, { campaignId: campaign.id });
+    assert.throws(
+      () => updateProspectOutreachStatus(db, page.items[0].id, "Contacté"),
+      /invalid_outreach_status/
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("restaure automatiquement une base supprimee depuis le dernier snapshot", async () => {
+  const { campaign, runtimeConfig, fixtureRecords } = statusRecoveryFixture(
+    "prospector-deleted-db-"
+  );
+
+  await runCampaign(campaign, runtimeConfig, { fixtureRecords });
+  let db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const page = getProspectPage(db, { campaignId: campaign.id });
+    updateProspectOutreachStatus(db, page.items[0].id, "Interessé");
+  } finally {
+    db.close();
+  }
+
+  fs.rmSync(runtimeConfig.dbPath);
+
+  db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const restoredPage = getProspectPage(db, { campaignId: campaign.id });
+    assert.equal(restoredPage.total, 1);
+    assert.equal(restoredPage.items[0].outreachStatus, "Interessé");
+  } finally {
+    db.close();
+  }
+});
+
+test("restaure automatiquement une base vide depuis le dernier snapshot", async () => {
+  const { campaign, runtimeConfig, fixtureRecords } = statusRecoveryFixture(
+    "prospector-empty-db-"
+  );
+
+  await runCampaign(campaign, runtimeConfig, { fixtureRecords });
+  let db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const page = getProspectPage(db, { campaignId: campaign.id });
+    updateProspectOutreachStatus(db, page.items[0].id, "A accepté");
+  } finally {
+    db.close();
+  }
+
+  const SQL = await initSqlJs();
+  const emptyDb = new SQL.Database();
+  fs.writeFileSync(runtimeConfig.dbPath, Buffer.from(emptyDb.export()));
+  emptyDb.close();
+
+  db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const restoredPage = getProspectPage(db, { campaignId: campaign.id });
+    assert.equal(restoredPage.total, 1);
+    assert.equal(restoredPage.items[0].outreachStatus, "A accepté");
+  } finally {
+    db.close();
+  }
+});
+
+test("restaure automatiquement une base corrompue depuis le dernier snapshot", async () => {
+  const { campaign, runtimeConfig, fixtureRecords } = statusRecoveryFixture(
+    "prospector-corrupt-db-"
+  );
+
+  await runCampaign(campaign, runtimeConfig, { fixtureRecords });
+  let db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const page = getProspectPage(db, { campaignId: campaign.id });
+    updateProspectOutreachStatus(db, page.items[0].id, "Décliné", "doublon");
+  } finally {
+    db.close();
+  }
+
+  fs.writeFileSync(runtimeConfig.dbPath, "not a sqlite database");
+
+  db = await openDatabase(runtimeConfig.dbPath);
+  try {
+    const restoredPage = getProspectPage(db, { campaignId: campaign.id });
+    assert.equal(restoredPage.total, 1);
+    assert.equal(restoredPage.items[0].outreachStatus, "Décliné");
+    assert.equal(restoredPage.items[0].rejectionReason, "doublon");
+  } finally {
+    db.close();
+  }
+});
+
+function statusRecoveryFixture(tmpPrefix) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), tmpPrefix));
+  return {
+    campaign: {
+      id: "status-recovery-campaign",
+      name: "Status Recovery Campaign",
+      businessType: "garages automobiles",
+      targetCount: 50,
+      cities: ["Pantin"],
+      localAngle: "Angle local.",
+      sources: {}
+    },
+    runtimeConfig: {
+      dbPath: path.join(tmp, "prospector.sqlite"),
+      exportDir: path.join(tmp, "exports"),
+      cacheDir: path.join(tmp, "cache")
+    },
+    fixtureRecords: [
+      normalizeSourceRecord({
+        source: "fixture",
+        sourceId: "1",
+        name: "Garage Snapshot Pantin",
+        city: "Pantin",
+        phone: "0102030405",
+        evidence: ["shop=car_repair"]
+      })
+    ]
+  };
+}

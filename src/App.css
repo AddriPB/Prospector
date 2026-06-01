@@ -346,8 +346,17 @@ td span {
 }
 
 .prospect-cell strong,
-.prospect-cell span {
+.prospect-cell span,
+.prospect-address {
   line-height: 1.15;
+}
+
+.prospect-address {
+  display: block;
+  color: #1f5c4d;
+  font-weight: 800;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 2px;
 }
 
 .prospect-site {

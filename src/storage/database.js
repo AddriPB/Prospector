@@ -17,27 +17,164 @@ import { DEFAULT_SECTOR, getCampaignSector, sectorOptions } from "../sectors.js"
 import { OUTREACH_STATUSES } from "../outreachStatus.js";
 import { normalizeKey } from "../utils/text.js";
 
+const OUTREACH_STATUS_SET = new Set(OUTREACH_STATUSES);
+const DATABASE_BACKUP_LIMIT = 12;
+
 export async function openDatabase(dbPath) {
   ensureDir(path.dirname(dbPath));
   const absolutePath = resolveProjectPath(dbPath);
   const SQL = await initSqlJs();
-  const db = fs.existsSync(absolutePath)
-    ? new SQL.Database(fs.readFileSync(absolutePath))
-    : new SQL.Database();
+  let db = loadRecoverableDatabase(SQL, absolutePath);
 
-  migrate(db);
+  try {
+    migrate(db);
+  } catch (error) {
+    db.close();
+    if (!restoreBestDatabaseSnapshot(SQL, absolutePath, 0)) throw error;
+    db = new SQL.Database(fs.readFileSync(absolutePath));
+    migrate(db);
+  }
+  if (restoreFromSnapshotIfNeeded(SQL, absolutePath, db)) {
+    db.close();
+    db = new SQL.Database(fs.readFileSync(absolutePath));
+    migrate(db);
+  }
 
   return {
     db,
     path: absolutePath,
     persist() {
-      fs.writeFileSync(absolutePath, Buffer.from(db.export()));
+      persistDatabaseAtomically(db, absolutePath);
     },
     close() {
-      this.persist();
       db.close();
     }
   };
+}
+
+function loadRecoverableDatabase(SQL, absolutePath) {
+  if (!fs.existsSync(absolutePath)) return new SQL.Database();
+
+  try {
+    return new SQL.Database(fs.readFileSync(absolutePath));
+  } catch (error) {
+    const restored = restoreBestDatabaseSnapshot(SQL, absolutePath, 0);
+    if (!restored) throw error;
+    return new SQL.Database(fs.readFileSync(absolutePath));
+  }
+}
+
+function restoreFromSnapshotIfNeeded(SQL, absolutePath, db) {
+  const currentRows = businessRowCount(db);
+  return restoreBestDatabaseSnapshot(SQL, absolutePath, currentRows);
+}
+
+function persistDatabaseAtomically(db, absolutePath) {
+  const dir = path.dirname(absolutePath);
+  ensureDir(dir);
+  const tmpPath = path.join(dir, `.${path.basename(absolutePath)}.${uniqueFileSuffix()}.tmp`);
+  try {
+    fs.writeFileSync(tmpPath, Buffer.from(db.export()), { flag: "wx" });
+    fs.renameSync(tmpPath, absolutePath);
+    snapshotDatabase(db, absolutePath);
+  } catch (error) {
+    fs.rmSync(tmpPath, { force: true });
+    throw error;
+  }
+}
+
+function snapshotDatabase(db, absolutePath) {
+  if (!businessRowCount(db)) return;
+
+  const backupDir = databaseBackupDir(absolutePath);
+  ensureDir(backupDir);
+  const backupPath = path.join(
+    backupDir,
+    `${path.basename(absolutePath)}.${uniqueFileSuffix()}.snapshot`
+  );
+  fs.copyFileSync(absolutePath, backupPath, fs.constants.COPYFILE_EXCL);
+  pruneDatabaseSnapshots(backupDir);
+}
+
+function restoreBestDatabaseSnapshot(SQL, absolutePath, currentRows) {
+  const backup = findBestDatabaseSnapshot(SQL, absolutePath, currentRows);
+  if (!backup) return false;
+
+  const damagedPath = `${absolutePath}.damaged-${uniqueFileSuffix()}`;
+  if (fs.existsSync(absolutePath)) fs.renameSync(absolutePath, damagedPath);
+  fs.copyFileSync(backup.path, absolutePath);
+  return true;
+}
+
+function findBestDatabaseSnapshot(SQL, absolutePath, currentRows) {
+  const backupDir = databaseBackupDir(absolutePath);
+  if (!fs.existsSync(backupDir)) return null;
+
+  return fs
+    .readdirSync(backupDir)
+    .filter((file) => file.endsWith(".sqlite") || file.includes(".snapshot"))
+    .map((file) => {
+      const snapshotPath = path.join(backupDir, file);
+      return {
+        path: snapshotPath,
+        rows: businessRowCountFromFile(SQL, snapshotPath),
+        mtimeMs: fs.statSync(snapshotPath).mtimeMs
+      };
+    })
+    .filter((snapshot) => snapshot.rows > currentRows)
+    .sort((a, b) => b.rows - a.rows || b.mtimeMs - a.mtimeMs)[0] || null;
+}
+
+function pruneDatabaseSnapshots(backupDir) {
+  const snapshots = fs
+    .readdirSync(backupDir)
+    .filter((file) => file.includes(".snapshot"))
+    .map((file) => ({
+      path: path.join(backupDir, file),
+      mtimeMs: fs.statSync(path.join(backupDir, file)).mtimeMs
+    }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  for (const snapshot of snapshots.slice(DATABASE_BACKUP_LIMIT)) {
+    fs.rmSync(snapshot.path, { force: true });
+  }
+}
+
+function businessRowCountFromFile(SQL, dbPath) {
+  try {
+    const db = new SQL.Database(fs.readFileSync(dbPath));
+    try {
+      return businessRowCount(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return 0;
+  }
+}
+
+function businessRowCount(db) {
+  return (
+    safeCount(db, "prospects") +
+    safeCount(db, "campaign_prospects") +
+    safeCount(db, "campaigns")
+  );
+}
+
+function safeCount(db, table) {
+  try {
+    return Number(get(db, `SELECT COUNT(*) AS count FROM ${table}`)?.count || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function databaseBackupDir(absolutePath) {
+  return path.join(path.dirname(absolutePath), "backups");
+}
+
+function uniqueFileSuffix() {
+  return `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}-${process.hrtime.bigint()}`;
 }
 
 export function migrate(db) {
@@ -472,6 +609,9 @@ export function updateProspectOutreachStatus(
   outreachStatus,
   rejectionReason = null
 ) {
+  if (!OUTREACH_STATUS_SET.has(outreachStatus)) {
+    throw new Error("invalid_outreach_status");
+  }
   const now = new Date().toISOString();
   const normalizedReason = outreachStatus === "Décliné" ? String(rejectionReason || "") : null;
   if (outreachStatus === "Décliné" && !REJECTION_REASONS.some((reason) => reason.id === normalizedReason)) {
@@ -488,7 +628,8 @@ export function updateProspectOutreachStatus(
 }
 
 export function updateProspectRejectionReason(connection, prospectId, rejectionReason) {
-  if (!REJECTION_REASONS.some((reason) => reason.id === rejectionReason)) {
+  const normalizedReason = String(rejectionReason || "");
+  if (normalizedReason && !REJECTION_REASONS.some((reason) => reason.id === normalizedReason)) {
     throw new Error("invalid_rejection_reason");
   }
   const now = new Date().toISOString();
@@ -497,7 +638,7 @@ export function updateProspectRejectionReason(connection, prospectId, rejectionR
     `UPDATE prospects
      SET rejection_reason = ?, updated_at = ?
      WHERE id = ?`,
-    [rejectionReason, now, prospectId]
+    [normalizedReason || null, now, prospectId]
   );
   connection.persist();
 }

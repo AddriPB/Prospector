@@ -145,7 +145,7 @@ export async function startServer(campaign, runtimeConfig) {
     if (!Number.isInteger(prospectId) || prospectId <= 0) {
       return res.status(400).json({ error: "invalid_prospect_id" });
     }
-    if (!REJECTION_REASON_SET.has(rejectionReason)) {
+    if (rejectionReason && !REJECTION_REASON_SET.has(rejectionReason)) {
       return res.status(400).json({ error: "invalid_rejection_reason" });
     }
 

@@ -21,10 +21,20 @@ npm test
 node --check src/cli.js
 git status --short || true
 
-ssh "$PI_HOST" "mkdir -p '$PI_DIR' '$PI_DIR/data' '$PI_DIR/logs' '$PI_DIR/exports'"
+ssh "$PI_HOST" "
+  set -e
+  mkdir -p '$PI_DIR' '$PI_DIR/data' '$PI_DIR/data/backups' '$PI_DIR/logs' '$PI_DIR/exports'
+  if [ -f '$PI_DIR/data/prospector.sqlite' ]; then
+    backup_ts=\$(date +%Y%m%d-%H%M%S)
+    cp '$PI_DIR/data/prospector.sqlite' '$PI_DIR/data/backups/prospector-pre-deploy-'\$backup_ts'.sqlite'
+  fi
+"
 
 rsync -az --delete \
   --exclude '.git/' \
+  --include '/.env.example' \
+  --exclude '/.env' \
+  --exclude '/.env.*' \
   --exclude '.DS_Store' \
   --exclude 'CODEX_PROJECT_CONTEXT.md' \
   --exclude '/node_modules/' \

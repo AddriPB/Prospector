@@ -583,7 +583,7 @@ export default function App() {
                     <td>{sectorLabel(prospect.sector, sectors)}</td>
                     <td className="prospect-cell">
                       <strong>{prospect.name}</strong>
-                      <span>{[prospect.address, prospect.city].filter(Boolean).join(" - ")}</span>
+                      <ProspectAddressLink prospect={prospect} />
                       {prospect.website ? (
                         <a className="prospect-site" href={normalizeHref(prospect.website)} target="_blank" rel="noreferrer">
                           {prospect.website}
@@ -798,6 +798,31 @@ function updateProspectsCacheRejectionReason(cache, prospectId, rejectionReason)
 
 function sectorLabel(sectorId, sectors) {
   return sectors.find((sector) => sector.id === sectorId)?.label || sectorId || "-";
+}
+
+function ProspectAddressLink({ prospect }) {
+  const address = formatProspectAddress(prospect);
+  if (!address) return null;
+
+  return (
+    <a
+      className="prospect-address"
+      href={googleMapsHref(address)}
+      target="_blank"
+      rel="noreferrer"
+      title="Ouvrir dans Google Maps"
+    >
+      {address}
+    </a>
+  );
+}
+
+function formatProspectAddress(prospect) {
+  return [prospect.address, prospect.city].filter(Boolean).join(" - ");
+}
+
+function googleMapsHref(address) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
 
 function normalizeHref(url) {
