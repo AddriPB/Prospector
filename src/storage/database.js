@@ -49,7 +49,14 @@ export async function openDatabase(dbPath) {
       persistDatabaseAtomically(db, absolutePath);
     },
     close() {
-      db.close();
+      try {
+        db.close();
+      } catch (error) {
+        if (!String(error.message || "").includes("bad parameter or other API misuse")) {
+          throw error;
+        }
+        console.error(`[prospector] Fermeture sql.js ignoree: ${error.message}`);
+      }
     }
   };
 }
