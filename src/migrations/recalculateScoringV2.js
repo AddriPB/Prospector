@@ -66,7 +66,9 @@ export function recalculateScoringV2(connection, campaigns = [], options = {}) {
 }
 
 function recalculateRows(connection, rows, evidenceByProspectId, campaignById, now, stats) {
-  connection.db.run("BEGIN TRANSACTION");
+  const savepoint = `scoring_batch_${process.pid}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  connection.db.run(`SAVEPOINT ${savepoint}`);
+  let savepointActive = true;
   try {
     for (const row of rows) {
       stats.processed += 1;
@@ -115,9 +117,19 @@ function recalculateRows(connection, rows, evidenceByProspectId, campaignById, n
         );
       }
     }
-    connection.db.run("COMMIT");
+    connection.db.run(`RELEASE ${savepoint}`);
+    savepointActive = false;
   } catch (error) {
-    connection.db.run("ROLLBACK");
+    if (savepointActive) {
+      try {
+        connection.db.run(`ROLLBACK TO ${savepoint}`);
+        connection.db.run(`RELEASE ${savepoint}`);
+      } catch (rollbackError) {
+        console.error(
+          `[scoring:${SCORING_VERSION}] rollback ignore: ${rollbackError.message}`
+        );
+      }
+    }
     throw error;
   }
 }
