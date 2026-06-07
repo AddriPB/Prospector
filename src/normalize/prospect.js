@@ -1,5 +1,6 @@
 import { stableHash } from "../utils/hash.js";
 import { compactWhitespace, normalizeKey, uniqBy } from "../utils/text.js";
+import { normalizeAudit } from "../web-audit/auditWebsite.js";
 
 const PRIORITY_SCORE_THRESHOLD = 70;
 
@@ -16,6 +17,7 @@ export function normalizeSourceRecord(input) {
   const sourceUrl = normalizeUrl(input.sourceUrl || input.url);
   const collectedAt = input.collectedAt || new Date().toISOString();
   const evidence = uniqBy(input.evidence || [], (value) => value);
+  const webAudit = normalizeWebAudit(input.webAudit);
   const keyBase = [name, city || address].filter(Boolean).join("|");
   const baseRecord = {
     name,
@@ -60,6 +62,7 @@ export function normalizeSourceRecord(input) {
     phone,
     email,
     social,
+    webAudit,
     evidence,
     confidence,
     contactability,
@@ -77,6 +80,7 @@ export function normalizeSourceRecord(input) {
       }
     ]),
     sources: uniqBy([...(input.sources || []), source], (value) => value),
+    webAudit,
     raw: input.raw || {}
   };
 }
@@ -199,6 +203,7 @@ function mergeInto(existing, record) {
     [...(existing.social || []), ...(record.social || [])],
     (value) => value.toLowerCase()
   );
+  existing.webAudit = mergeWebAudit(existing.webAudit, record.webAudit);
   existing.evidence = uniqBy(
     [...(existing.evidence || []), ...(record.evidence || [])],
     (value) => value
@@ -221,6 +226,19 @@ function normalizeUrl(value) {
   } catch {
     return trimmed;
   }
+}
+
+function normalizeWebAudit(value) {
+  if (!value || typeof value !== "object") return null;
+  return normalizeAudit(value);
+}
+
+function mergeWebAudit(existing, incoming) {
+  const current = normalizeWebAudit(existing);
+  const next = normalizeWebAudit(incoming);
+  if (!current) return next;
+  if (!next) return current;
+  return String(next.checkedAt || "") >= String(current.checkedAt || "") ? next : current;
 }
 
 function bestDedupeKey(record) {

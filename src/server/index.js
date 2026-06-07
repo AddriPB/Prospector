@@ -4,11 +4,13 @@ import { fileURLToPath } from "node:url";
 import { loadConfiguredCampaigns } from "../campaign/configuredCampaigns.js";
 import { runCampaign } from "../campaign/runCampaign.js";
 import {
+  CONTACT_CHANNELS,
   openDatabase,
   getDashboardState,
   getFollowUpProspectPage,
   getProspectPage,
   updateCommercialScript,
+  updateProspectExclusion,
   updateProspectFollowUp,
   updateProspectOutreachStatus,
   updateProspectRejectionReason
@@ -16,11 +18,13 @@ import {
 import { OUTREACH_STATUSES } from "../outreachStatus.js";
 import { REJECTION_REASONS } from "../rejectionReasons.js";
 import { loginHandler, logoutHandler, meHandler, requireAuth } from "./auth.js";
+import { backfillWebAudits } from "../web-audit/backfill.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const OUTREACH_STATUS_SET = new Set(OUTREACH_STATUSES);
 const REJECTION_REASON_SET = new Set(REJECTION_REASONS.map((reason) => reason.id));
+const CONTACT_CHANNEL_SET = new Set(CONTACT_CHANNELS);
 
 export async function startServer(campaign, runtimeConfig) {
   const app = express();
@@ -71,6 +75,7 @@ export async function startServer(campaign, runtimeConfig) {
             sector: String(req.query.sector || "all"),
             outreachStatus: String(req.query.outreachStatus || "all"),
             sort: String(req.query.sort || "priority"),
+            includeExcluded: parseBooleanQuery(req.query.includeExcluded),
             limit: parseIntegerQuery(req.query.limit, 100),
             offset: parseIntegerQuery(req.query.offset, 0)
           })
@@ -90,6 +95,7 @@ export async function startServer(campaign, runtimeConfig) {
         res.json(
           getFollowUpProspectPage(db, {
             outreachStatus: String(req.query.outreachStatus || "all"),
+            includeExcluded: parseBooleanQuery(req.query.includeExcluded),
             limit: parseIntegerQuery(req.query.limit, 100),
             offset: parseIntegerQuery(req.query.offset, 0)
           })
@@ -124,6 +130,24 @@ export async function startServer(campaign, runtimeConfig) {
           qualified: result.qualified
         }))
       });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/web-audit/backfill", requireAuth, async (req, res, next) => {
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        const stats = await backfillWebAudits(db, campaign, runtimeConfig, {
+          limit: Math.max(1, Math.min(500, Number(req.body?.limit) || 25)),
+          force: Boolean(req.body?.force),
+          dryRun: Boolean(req.body?.dryRun)
+        });
+        res.json({ ok: true, ...stats });
+      } finally {
+        db.close();
+      }
     } catch (error) {
       next(error);
     }
@@ -188,12 +212,21 @@ export async function startServer(campaign, runtimeConfig) {
     if (!Number.isInteger(prospectId) || prospectId <= 0) {
       return res.status(400).json({ error: "invalid_prospect_id" });
     }
+    const lastContactChannel = req.body?.lastContactChannel;
+    if (
+      lastContactChannel !== undefined &&
+      String(lastContactChannel || "").trim() &&
+      !CONTACT_CHANNEL_SET.has(String(lastContactChannel))
+    ) {
+      return res.status(400).json({ error: "invalid_last_contact_channel" });
+    }
 
     try {
       const db = await openDatabase(runtimeConfig.dbPath);
       try {
         const prospect = updateProspectFollowUp(db, prospectId, {
           lastContactedAt: req.body?.lastContactedAt,
+          lastContactChannel: req.body?.lastContactChannel,
           followUpNotes: req.body?.followUpNotes
         });
         res.json({ ok: true, prospect });
@@ -204,6 +237,34 @@ export async function startServer(campaign, runtimeConfig) {
       if (error.message === "invalid_last_contacted_at") {
         return res.status(400).json({ error: "invalid_last_contacted_at" });
       }
+      if (error.message === "invalid_last_contact_channel") {
+        return res.status(400).json({ error: "invalid_last_contact_channel" });
+      }
+      if (error.message === "prospect_not_found") {
+        return res.status(404).json({ error: "prospect_not_found" });
+      }
+      next(error);
+    }
+  });
+
+  app.patch("/api/prospects/:id/exclusion", requireAuth, async (req, res, next) => {
+    const prospectId = Number(req.params.id);
+    if (!Number.isInteger(prospectId) || prospectId <= 0) {
+      return res.status(400).json({ error: "invalid_prospect_id" });
+    }
+
+    try {
+      const db = await openDatabase(runtimeConfig.dbPath);
+      try {
+        const prospect = updateProspectExclusion(db, prospectId, {
+          excluded: Boolean(req.body?.excluded),
+          exclusionReason: req.body?.exclusionReason
+        });
+        res.json({ ok: true, prospect });
+      } finally {
+        db.close();
+      }
+    } catch (error) {
       if (error.message === "prospect_not_found") {
         return res.status(404).json({ error: "prospect_not_found" });
       }
@@ -248,4 +309,8 @@ export async function startServer(campaign, runtimeConfig) {
 function parseIntegerQuery(value, fallback) {
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function parseBooleanQuery(value) {
+  return ["1", "true", "yes"].includes(String(value || "").toLowerCase());
 }

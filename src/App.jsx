@@ -7,6 +7,7 @@ import { sectorOptions } from "./sectors.js";
 const SESSION_TOKEN_KEY = "prospector_session_token";
 const DEFAULT_PAGE_SIZE = 100;
 const PAGE_SIZE_OPTIONS = [100, 250, 500];
+const DEFAULT_CONTACT_CHANNELS = ["Téléphone", "SMS", "Email", "Formulaire", "Autre"];
 const DEFAULT_API_BASE = String(import.meta.env.VITE_PUBLIC_API_BASE || "").replace(
   /\/$/,
   ""
@@ -41,6 +42,7 @@ export default function App() {
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpCache, setFollowUpCache] = useState({});
   const [followUpStatusFilter, setFollowUpStatusFilter] = useState("all");
+  const [followUpExcludedFilter, setFollowUpExcludedFilter] = useState("active");
   const [followUpPageSize, setFollowUpPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [followUpPageIndex, setFollowUpPageIndex] = useState(0);
   const [followUpSaving, setFollowUpSaving] = useState({});
@@ -49,6 +51,7 @@ export default function App() {
   const [statusSaving, setStatusSaving] = useState({});
   const [sectorFilter, setSectorFilter] = useState("all");
   const [outreachStatusFilter, setOutreachStatusFilter] = useState("all");
+  const [excludedFilter, setExcludedFilter] = useState("active");
   const [sortOrder, setSortOrder] = useState("priority");
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [pageIndex, setPageIndex] = useState(0);
@@ -63,6 +66,7 @@ export default function App() {
   const sectors = dashboard?.filters?.sectors || sectorOptions();
   const outreachStatuses = dashboard?.filters?.outreachStatuses || OUTREACH_STATUSES;
   const rejectionReasons = dashboard?.filters?.rejectionReasons || REJECTION_REASONS;
+  const contactChannels = dashboard?.filters?.contactChannels || DEFAULT_CONTACT_CHANNELS;
   const commercialScripts = dashboard?.commercialScripts || [];
   const totalProspects = prospectsPage.total || 0;
   const pageCount = Math.max(1, Math.ceil(totalProspects / pageSize));
@@ -93,21 +97,21 @@ export default function App() {
 
   useEffect(() => {
     setPageIndex(0);
-  }, [sectorFilter, outreachStatusFilter, sortOrder, pageSize]);
+  }, [sectorFilter, outreachStatusFilter, excludedFilter, sortOrder, pageSize]);
 
   useEffect(() => {
     setFollowUpPageIndex(0);
-  }, [followUpStatusFilter, followUpPageSize]);
+  }, [followUpStatusFilter, followUpExcludedFilter, followUpPageSize]);
 
   useEffect(() => {
     if (!authenticated) return;
     loadProspects();
-  }, [authenticated, sectorFilter, outreachStatusFilter, sortOrder, pageSize, pageIndex]);
+  }, [authenticated, sectorFilter, outreachStatusFilter, excludedFilter, sortOrder, pageSize, pageIndex]);
 
   useEffect(() => {
     if (!authenticated || activeTab !== "follow-up") return;
     loadFollowUpProspects();
-  }, [authenticated, activeTab, followUpStatusFilter, followUpPageSize, followUpPageIndex]);
+  }, [authenticated, activeTab, followUpStatusFilter, followUpExcludedFilter, followUpPageSize, followUpPageIndex]);
 
   useEffect(() => {
     if (!commercialScripts.length) return;
@@ -187,6 +191,7 @@ export default function App() {
       sector: sectorFilter,
       outreachStatus: outreachStatusFilter,
       sort: sortOrder,
+      includeExcluded: excludedFilter === "included" ? "1" : "0",
       limit: String(pageSize),
       offset: String(offset)
     });
@@ -223,6 +228,7 @@ export default function App() {
     const offset = requestedPageIndex * followUpPageSize;
     const params = new URLSearchParams({
       outreachStatus: followUpStatusFilter,
+      includeExcluded: followUpExcludedFilter === "included" ? "1" : "0",
       limit: String(followUpPageSize),
       offset: String(offset)
     });
@@ -404,6 +410,7 @@ export default function App() {
     const previous = prospect
       ? {
           lastContactedAt: prospect.lastContactedAt || "",
+          lastContactChannel: prospect.lastContactChannel || "",
           followUpNotes: prospect.followUpNotes || ""
         }
       : null;
@@ -423,6 +430,7 @@ export default function App() {
         setFollowUpPage((current) =>
           updateProspectPageFollowUp(current, prospectId, {
             lastContactedAt: data.prospect.lastContactedAt || "",
+            lastContactChannel: data.prospect.lastContactChannel || "",
             followUpNotes: data.prospect.followUpNotes || ""
           })
         );
@@ -437,6 +445,59 @@ export default function App() {
       setMessage(apiErrorMessage(error, "Impossible d'enregistrer le suivi."));
     } finally {
       setFollowUpSaving((current) => {
+        const next = { ...current };
+        delete next[prospectId];
+        return next;
+      });
+    }
+  }
+
+  async function updateExclusion(prospectId, updates) {
+    const prospect =
+      prospects.find((item) => item.id === prospectId) ||
+      followUpProspects.find((item) => item.id === prospectId);
+    const previous = prospect
+      ? {
+          excluded: Boolean(prospect.excluded),
+          exclusionReason: prospect.exclusionReason || "",
+          excludedAt: prospect.excludedAt || ""
+        }
+      : null;
+    setProspectsPage((current) => updateProspectPageExclusion(current, prospectId, updates));
+    setProspectsCache((current) => updateProspectsCacheExclusion(current, prospectId, updates));
+    setFollowUpPage((current) => updateProspectPageExclusion(current, prospectId, updates));
+    setFollowUpCache((current) => updateProspectsCacheExclusion(current, prospectId, updates));
+    setStatusSaving((current) => ({ ...current, [prospectId]: true }));
+    setMessage("");
+
+    try {
+      const data = await api(`/api/prospects/${prospectId}/exclusion`, {
+        method: "PATCH",
+        body: JSON.stringify(updates)
+      });
+      if (data.prospect) {
+        const next = {
+          excluded: Boolean(data.prospect.excluded),
+          exclusionReason: data.prospect.exclusionReason || "",
+          excludedAt: data.prospect.excludedAt || ""
+        };
+        setProspectsPage((current) => updateProspectPageExclusion(current, prospectId, next));
+        setFollowUpPage((current) => updateProspectPageExclusion(current, prospectId, next));
+      }
+      setProspectsCache({});
+      setFollowUpCache({});
+      await loadProspects({ force: true });
+      if (activeTab === "follow-up") await loadFollowUpProspects({ force: true });
+    } catch (error) {
+      if (previous) {
+        setProspectsPage((current) => updateProspectPageExclusion(current, prospectId, previous));
+        setProspectsCache((current) => updateProspectsCacheExclusion(current, prospectId, previous));
+        setFollowUpPage((current) => updateProspectPageExclusion(current, prospectId, previous));
+        setFollowUpCache((current) => updateProspectsCacheExclusion(current, prospectId, previous));
+      }
+      setMessage(apiErrorMessage(error, "Impossible de modifier l'exclusion."));
+    } finally {
+      setStatusSaving((current) => {
         const next = { ...current };
         delete next[prospectId];
         return next;
@@ -751,6 +812,16 @@ export default function App() {
               </select>
             </label>
             <label>
+              Exclusion
+              <select
+                value={followUpExcludedFilter}
+                onChange={(event) => setFollowUpExcludedFilter(event.target.value)}
+              >
+                <option value="active">Actifs seulement</option>
+                <option value="included">Inclure exclus</option>
+              </select>
+            </label>
+            <label>
               Lignes
               <select
                 value={followUpPageSize}
@@ -777,6 +848,8 @@ export default function App() {
                   <th>Entreprise</th>
                   <th>Etat commercial</th>
                   <th>Dernier contact</th>
+                  <th>Canal</th>
+                  <th>Exclusion</th>
                   {showFollowUpNotes ? (
                     <th>
                       <span>Observations</span>
@@ -824,6 +897,32 @@ export default function App() {
                             lastContactedAt: event.target.value
                           })
                         }
+                      />
+                    </td>
+                    <td>
+                      <select
+                        className="status-select"
+                        value={prospect.lastContactChannel || ""}
+                        disabled={Boolean(followUpSaving[prospect.id])}
+                        onChange={(event) =>
+                          updateFollowUp(prospect.id, {
+                            lastContactChannel: event.target.value
+                          })
+                        }
+                      >
+                        <option value="">-</option>
+                        {contactChannels.map((channel) => (
+                          <option key={channel} value={channel}>
+                            {channel}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <ExclusionEditor
+                        prospect={prospect}
+                        disabled={Boolean(statusSaving[prospect.id])}
+                        onChange={updateExclusion}
                       />
                     </td>
                     {showFollowUpNotes ? (
@@ -903,6 +1002,16 @@ export default function App() {
               </select>
             </label>
             <label>
+              Exclusion
+              <select
+                value={excludedFilter}
+                onChange={(event) => setExcludedFilter(event.target.value)}
+              >
+                <option value="active">Actifs seulement</option>
+                <option value="included">Inclure exclus</option>
+              </select>
+            </label>
+            <label>
               Tri
               <select
                 value={sortOrder}
@@ -943,9 +1052,11 @@ export default function App() {
                   <th>Prospect</th>
                   <th>Contacts</th>
                   <th>Site</th>
+                  <th>Audit web</th>
                   <th>Doublon</th>
                   <th>Etat</th>
                   <th>Motif rejet</th>
+                  <th>Exclusion</th>
                 </tr>
               </thead>
               <tbody>
@@ -976,6 +1087,9 @@ export default function App() {
                       ) : (
                         <span className="muted">-</span>
                       )}
+                    </td>
+                    <td className="compact-text">
+                      <WebAuditSummary audit={prospect.webAudit} />
                     </td>
                     <td>
                       {prospect.duplicateSuspected ? (
@@ -1016,6 +1130,13 @@ export default function App() {
                           </option>
                         ))}
                       </select>
+                    </td>
+                    <td>
+                      <ExclusionEditor
+                        prospect={prospect}
+                        disabled={Boolean(statusSaving[prospect.id])}
+                        onChange={updateExclusion}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -1096,10 +1217,11 @@ function ScoreBreakdown({ breakdown }) {
     <ul className="score-breakdown">
       {items.map(([label, part]) => (
         <li key={label}>
-          <span>{label} :</span>
-          <strong>
-            {part.score}/{part.max}
-          </strong>
+          <div>
+            <span>{label} :</span>
+            <ScoreProofs proofs={part.proofs} />
+          </div>
+          <strong>{part.score}/{part.max}</strong>
         </li>
       ))}
     </ul>
@@ -1108,7 +1230,22 @@ function ScoreBreakdown({ breakdown }) {
 
 function scorePart(breakdown, key, max) {
   const score = Math.max(0, Math.min(max, Number(breakdown?.[key]?.score) || 0));
-  return { score, max: breakdown?.[key]?.max || max };
+  return { score, max: breakdown?.[key]?.max || max, proofs: breakdown?.[key]?.proofs || [] };
+}
+
+function ScoreProofs({ proofs = [] }) {
+  const visibleProofs = proofs.slice(0, 2);
+  if (!visibleProofs.length) return null;
+  return (
+    <ul className="score-proofs">
+      {visibleProofs.map((proof, index) => (
+        <li key={`${proof.label}:${index}`}>
+          <span>{proof.label}</span>
+          <small>{[proof.evidence, proof.checkedAt ? formatDate(proof.checkedAt) : ""].filter(Boolean).join(" | ")}</small>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function ContactList({ prospect }) {
@@ -1130,6 +1267,79 @@ function ContactList({ prospect }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function WebAuditSummary({ audit }) {
+  if (!audit || !Object.keys(audit).length) return <span className="muted">Non verifie</span>;
+  if (!audit.sitePresent) {
+    return (
+      <div>
+        <span>
+          {audit.webPresenceKind === "third_party_only"
+            ? "Presence tierce seulement"
+            : "Site officiel absent"}
+        </span>
+        {audit.finalUrl || audit.checkedUrl ? <small>{audit.finalUrl || audit.checkedUrl}</small> : null}
+        <small className="muted">{audit.checkedAt ? formatDate(audit.checkedAt) : ""}</small>
+      </div>
+    );
+  }
+  const items = [
+    audit.webPresenceKind === "official_site" ? "site officiel" : audit.webPresenceKind,
+    audit.siteAccessible ? "accessible" : "inaccessible",
+    audit.httpStatus ? `HTTP ${audit.httpStatus}` : null,
+    audit.https ? "HTTPS" : "sans HTTPS",
+    audit.title ? `title: ${audit.title}` : audit.titlePresent ? "title" : "title absent",
+    audit.metaDescription ? "meta desc" : "meta absente",
+    audit.viewportPresent ? "mobile" : "mobile absent",
+    audit.visibleContact || audit.visibleEmail || audit.visiblePhone ? "contact visible" : "contact absent",
+    audit.visibleSocial ? "social visible" : null,
+    audit.contactPageOrFormDetected ? "page/formulaire contact" : null,
+    audit.socialOrDirectoryOnly ? "reseau/annuaire" : null
+  ].filter(Boolean);
+  return (
+    <div>
+      <span>{items.join(" | ")}</span>
+      {audit.finalUrl || audit.checkedUrl ? <small>{audit.finalUrl || audit.checkedUrl}</small> : null}
+      <small className="muted">{audit.checkedAt ? formatDate(audit.checkedAt) : ""}</small>
+    </div>
+  );
+}
+
+function ExclusionEditor({ prospect, disabled, onChange }) {
+  return (
+    <div className="exclusion-editor">
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={Boolean(prospect.excluded)}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange(prospect.id, {
+              excluded: event.target.checked,
+              exclusionReason: prospect.exclusionReason || ""
+            })
+          }
+        />
+        Exclu
+      </label>
+      {prospect.excluded ? (
+        <input
+          type="text"
+          value={prospect.exclusionReason || ""}
+          disabled={disabled}
+          maxLength={160}
+          placeholder="Motif"
+          onChange={(event) =>
+            onChange(prospect.id, {
+              excluded: true,
+              exclusionReason: event.target.value
+            })
+          }
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -1186,6 +1396,25 @@ function updateProspectsCacheFollowUp(cache, prospectId, updates) {
     Object.entries(cache).map(([key, page]) => [
       key,
       updateProspectPageFollowUp(page, prospectId, updates)
+    ])
+  );
+}
+
+function updateProspectPageExclusion(page, prospectId, updates) {
+  if (!page) return page;
+  return {
+    ...page,
+    items: (page.items || []).map((prospect) =>
+      prospect.id === prospectId ? { ...prospect, ...updates } : prospect
+    )
+  };
+}
+
+function updateProspectsCacheExclusion(cache, prospectId, updates) {
+  return Object.fromEntries(
+    Object.entries(cache).map(([key, page]) => [
+      key,
+      updateProspectPageExclusion(page, prospectId, updates)
     ])
   );
 }

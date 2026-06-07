@@ -19,6 +19,8 @@ import { normalizeKey } from "../utils/text.js";
 
 const OUTREACH_STATUS_SET = new Set(OUTREACH_STATUSES);
 const DATABASE_BACKUP_LIMIT = 12;
+export const CONTACT_CHANNELS = ["Téléphone", "SMS", "Email", "Formulaire", "Autre"];
+const CONTACT_CHANNEL_SET = new Set(CONTACT_CHANNELS);
 
 export async function openDatabase(dbPath) {
   ensureDir(path.dirname(dbPath));
@@ -34,7 +36,7 @@ export async function openDatabase(dbPath) {
     db = new SQL.Database(fs.readFileSync(absolutePath));
     migrate(db);
   }
-  if (restoreFromSnapshotIfNeeded(SQL, absolutePath, db)) {
+  if (restoreEmptyDatabaseFromSnapshotIfNeeded(SQL, absolutePath, db)) {
     db.close();
     db = new SQL.Database(fs.readFileSync(absolutePath));
     migrate(db);
@@ -53,7 +55,12 @@ export async function openDatabase(dbPath) {
 }
 
 function loadRecoverableDatabase(SQL, absolutePath) {
-  if (!fs.existsSync(absolutePath)) return new SQL.Database();
+  if (!fs.existsSync(absolutePath)) {
+    if (restoreBestDatabaseSnapshot(SQL, absolutePath, 0)) {
+      return new SQL.Database(fs.readFileSync(absolutePath));
+    }
+    return new SQL.Database();
+  }
 
   try {
     return new SQL.Database(fs.readFileSync(absolutePath));
@@ -64,8 +71,9 @@ function loadRecoverableDatabase(SQL, absolutePath) {
   }
 }
 
-function restoreFromSnapshotIfNeeded(SQL, absolutePath, db) {
+function restoreEmptyDatabaseFromSnapshotIfNeeded(SQL, absolutePath, db) {
   const currentRows = businessRowCount(db);
+  if (currentRows > 0) return false;
   return restoreBestDatabaseSnapshot(SQL, absolutePath, currentRows);
 }
 
@@ -212,9 +220,14 @@ export function migrate(db) {
       outreach_status TEXT NOT NULL DEFAULT 'A contacter',
       rejection_reason TEXT,
       last_contacted_at TEXT,
+      last_contact_channel TEXT,
       follow_up_notes TEXT NOT NULL DEFAULT '',
+      excluded INTEGER NOT NULL DEFAULT 0,
+      exclusion_reason TEXT NOT NULL DEFAULT '',
+      excluded_at TEXT,
       duplicate_suspected INTEGER NOT NULL DEFAULT 0,
       duplicate_of INTEGER,
+      web_audit_json TEXT NOT NULL DEFAULT '{}',
       raw_json TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL
     );
@@ -300,14 +313,19 @@ export function migrate(db) {
   );
   addColumnIfMissing(db, "prospects", "rejection_reason", "TEXT");
   addColumnIfMissing(db, "prospects", "last_contacted_at", "TEXT");
+  addColumnIfMissing(db, "prospects", "last_contact_channel", "TEXT");
   addColumnIfMissing(db, "prospects", "follow_up_notes", "TEXT NOT NULL DEFAULT ''");
-  addColumnIfMissing(
+  addColumnIfMissing(db, "prospects", "excluded", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "prospects", "exclusion_reason", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "prospects", "excluded_at", "TEXT");
+  addColumnIfMissing(db, "prospects", "web_audit_json", "TEXT NOT NULL DEFAULT '{}'");
+  const duplicateSuspectedColumnAdded = addColumnIfMissing(
     db,
     "prospects",
     "duplicate_suspected",
     "INTEGER NOT NULL DEFAULT 0"
   );
-  addColumnIfMissing(db, "prospects", "duplicate_of", "INTEGER");
+  const duplicateOfColumnAdded = addColumnIfMissing(db, "prospects", "duplicate_of", "INTEGER");
   addColumnIfMissing(
     db,
     "campaigns",
@@ -340,6 +358,8 @@ export function migrate(db) {
       ON prospects(outreach_status);
     CREATE INDEX IF NOT EXISTS idx_prospects_follow_up
       ON prospects(outreach_status, last_contacted_at);
+    CREATE INDEX IF NOT EXISTS idx_prospects_excluded
+      ON prospects(excluded, excluded_at);
     CREATE INDEX IF NOT EXISTS idx_prospects_city
       ON prospects(city);
     CREATE INDEX IF NOT EXISTS idx_prospects_duplicate
@@ -350,7 +370,9 @@ export function migrate(db) {
       ON campaign_runs(campaign_id, finished_at DESC);
   `);
 
-  markDuplicateSuspicions(db);
+  if (duplicateSuspectedColumnAdded || duplicateOfColumnAdded) {
+    markDuplicateSuspicions(db);
+  }
 }
 
 export function saveCampaignRun(connection, campaign, prospects) {
@@ -386,9 +408,9 @@ export function saveCampaignRun(connection, campaign, prospects) {
         `INSERT INTO prospects (
           dedupe_key, name, address, city, lat, lon, website, phone, email,
           social_json, sources_json, source_records_json, source_url, collected_at,
-          confidence, contactability, qualification_state, outreach_status, raw_json, updated_at
+          confidence, contactability, qualification_state, outreach_status, web_audit_json, raw_json, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(dedupe_key) DO UPDATE SET
           name = excluded.name,
           address = COALESCE(excluded.address, prospects.address),
@@ -406,6 +428,10 @@ export function saveCampaignRun(connection, campaign, prospects) {
           confidence = excluded.confidence,
           contactability = excluded.contactability,
           qualification_state = excluded.qualification_state,
+          web_audit_json = CASE
+            WHEN excluded.web_audit_json != '{}' THEN excluded.web_audit_json
+            ELSE prospects.web_audit_json
+          END,
           raw_json = excluded.raw_json,
           updated_at = excluded.updated_at`,
         [
@@ -427,6 +453,7 @@ export function saveCampaignRun(connection, campaign, prospects) {
           prospect.contactability || "none",
           prospect.qualificationState || "discovered",
           prospect.outreachStatus || "A contacter",
+          JSON.stringify(prospect.webAudit || {}),
           JSON.stringify(prospect.raw || {}),
           now
         ]
@@ -536,6 +563,7 @@ export function getCampaignResults(connection, campaignId) {
     social: JSON.parse(row.social_json || "[]"),
     sources: JSON.parse(row.sources_json || "[]"),
     sourceRecords: JSON.parse(row.source_records_json || "[]"),
+    webAudit: safeJsonParse(row.web_audit_json, {}),
     scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json, row.score),
     scoreReasons: JSON.parse(row.score_reasons_json || "[]")
   }));
@@ -563,7 +591,8 @@ export function getDashboardState(connection, campaignId = null) {
     connection.db,
     `SELECT substr(first_seen_at, 1, 10) AS day, COUNT(*) AS count
      FROM campaign_prospects
-     WHERE (? IS NULL OR campaign_id = ?)
+     JOIN prospects p ON p.id = campaign_prospects.prospect_id
+     WHERE (? IS NULL OR campaign_id = ?) AND p.excluded = 0
      GROUP BY day
      ORDER BY day DESC
      LIMIT 14`,
@@ -592,6 +621,7 @@ export function getDashboardState(connection, campaignId = null) {
     filters: {
       sectors: sectorOptions(),
       outreachStatuses: OUTREACH_STATUSES,
+      contactChannels: CONTACT_CHANNELS,
       rejectionReasons: REJECTION_REASONS
     }
   };
@@ -689,6 +719,7 @@ export function getProspectPage(connection, options = {}) {
     social: JSON.parse(row.social_json || "[]"),
     sources: JSON.parse(row.sources_json || "[]"),
     sourceRecords: JSON.parse(row.source_records_json || "[]"),
+    webAudit: safeJsonParse(row.web_audit_json, {}),
     scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json, row.score),
     scoreReasons: JSON.parse(row.score_reasons_json || "[]")
   }));
@@ -796,6 +827,10 @@ export function updateProspectFollowUp(connection, prospectId, updates = {}) {
       : normalizeLastContactedAt(updates.lastContactedAt);
   const nextNotes =
     updates.followUpNotes === undefined ? undefined : String(updates.followUpNotes || "");
+  const nextChannel =
+    updates.lastContactChannel === undefined
+      ? undefined
+      : normalizeLastContactChannel(updates.lastContactChannel);
   const assignments = ["updated_at = ?"];
   const params = [new Date().toISOString()];
 
@@ -806,6 +841,10 @@ export function updateProspectFollowUp(connection, prospectId, updates = {}) {
   if (nextNotes !== undefined) {
     assignments.unshift("follow_up_notes = ?");
     params.unshift(nextNotes);
+  }
+  if (nextChannel !== undefined) {
+    assignments.unshift("last_contact_channel = ?");
+    params.unshift(nextChannel);
   }
   if (assignments.length === 1) {
     return toDashboardProspect(
@@ -821,6 +860,24 @@ export function updateProspectFollowUp(connection, prospectId, updates = {}) {
      SET ${assignments.join(", ")}
      WHERE id = ?`,
     [...params, prospectId]
+  );
+  connection.persist();
+  return toDashboardProspect(hydrateDashboardRow(getProspectDashboardRow(connection, prospectId)));
+}
+
+export function updateProspectExclusion(connection, prospectId, updates = {}) {
+  const current = get(connection.db, "SELECT id FROM prospects WHERE id = ?", [prospectId]);
+  if (!current) throw new Error("prospect_not_found");
+
+  const excluded = Boolean(updates.excluded);
+  const reason = String(updates.exclusionReason || "").trim().slice(0, 160);
+  const now = new Date().toISOString();
+  run(
+    connection.db,
+    `UPDATE prospects
+     SET excluded = ?, exclusion_reason = ?, excluded_at = ?, updated_at = ?
+     WHERE id = ?`,
+    [excluded ? 1 : 0, excluded ? reason : "", excluded ? now : null, now, prospectId]
   );
   connection.persist();
   return toDashboardProspect(hydrateDashboardRow(getProspectDashboardRow(connection, prospectId)));
@@ -886,6 +943,7 @@ function getAllCampaignResults(connection) {
     social: JSON.parse(row.social_json || "[]"),
     sources: JSON.parse(row.sources_json || "[]"),
     sourceRecords: JSON.parse(row.source_records_json || "[]"),
+    webAudit: safeJsonParse(row.web_audit_json, {}),
     scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json, row.score),
     scoreReasons: JSON.parse(row.score_reasons_json || "[]")
   }));
@@ -907,8 +965,11 @@ function buildProspectsWhere(options = {}) {
     params.push(options.outreachStatus);
   }
   if (options.contactedOnly) {
-    conditions.push("p.outreach_status != ?");
+    conditions.push("(p.outreach_status != ? OR p.last_contacted_at IS NOT NULL)");
     params.push("A contacter");
+  }
+  if (!options.includeExcluded) {
+    conditions.push("p.excluded = 0");
   }
 
   return {
@@ -929,7 +990,7 @@ function getCitySegments(connection, campaignId = null) {
       SUM(CASE WHEN p.outreach_status = 'Décliné' THEN 1 ELSE 0 END) AS rejected
      FROM campaign_prospects cp
      JOIN prospects p ON p.id = cp.prospect_id
-     WHERE (? IS NULL OR cp.campaign_id = ?)
+     WHERE (? IS NULL OR cp.campaign_id = ?) AND p.excluded = 0
      GROUP BY city
      ORDER BY prospects DESC, average_score DESC, city ASC
      LIMIT 100`,
@@ -977,6 +1038,7 @@ function toDashboardProspect(row) {
     phone: row.phone,
     email: row.email,
     social: row.social,
+    webAudit: row.webAudit || {},
     sources: row.sources,
     sourceRecords: row.sourceRecords,
     sourceUrl: row.source_url,
@@ -989,7 +1051,11 @@ function toDashboardProspect(row) {
     outreachStatus: row.outreach_status || "A contacter",
     rejectionReason: row.rejection_reason || "",
     lastContactedAt: row.last_contacted_at || "",
+    lastContactChannel: row.last_contact_channel || "",
     followUpNotes: row.follow_up_notes || "",
+    excluded: Boolean(row.excluded),
+    exclusionReason: row.exclusion_reason || "",
+    excludedAt: row.excluded_at || "",
     scoreReasons: row.scoreReasons,
     message: row.message,
     firstSeenAt: row.first_seen_at,
@@ -1004,6 +1070,7 @@ function hydrateDashboardRow(row) {
     social: JSON.parse(row.social_json || "[]"),
     sources: JSON.parse(row.sources_json || "[]"),
     sourceRecords: JSON.parse(row.source_records_json || "[]"),
+    webAudit: safeJsonParse(row.web_audit_json, {}),
     scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json, row.score),
     scoreReasons: JSON.parse(row.score_reasons_json || "[]")
   };
@@ -1014,6 +1081,15 @@ function normalizeLastContactedAt(value) {
   if (!normalized) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
     throw new Error("invalid_last_contacted_at");
+  }
+  return normalized;
+}
+
+function normalizeLastContactChannel(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  if (!CONTACT_CHANNEL_SET.has(normalized)) {
+    throw new Error("invalid_last_contact_channel");
   }
   return normalized;
 }
@@ -1277,7 +1353,8 @@ function normalizeBreakdownPart(part, max) {
   return {
     score,
     max,
-    reasons: Array.isArray(part?.reasons) ? part.reasons : []
+    reasons: Array.isArray(part?.reasons) ? part.reasons : [],
+    proofs: Array.isArray(part?.proofs) ? part.proofs : []
   };
 }
 
@@ -1322,8 +1399,9 @@ function all(db, sql, params = []) {
 
 function addColumnIfMissing(db, table, column, definition) {
   const columns = all(db, `PRAGMA table_info(${table})`);
-  if (columns.some((row) => row.name === column)) return;
+  if (columns.some((row) => row.name === column)) return false;
   db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
 }
 
 function prospectContacts(prospect) {

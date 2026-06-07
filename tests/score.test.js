@@ -42,6 +42,75 @@ test("score plus bas si metier ambigu et site deja present", () => {
   assert.equal(result.score < 40, true);
 });
 
+test("score distingue site officiel, presence tierce et site inaccessible", () => {
+  const official = scoreProspect(
+    {
+      name: "Garage Web Pantin",
+      city: "Pantin",
+      website: "https://garage-web.example",
+      evidence: ["shop=car_repair"],
+      webAudit: {
+        checkedAt: "2026-06-01T10:00:00.000Z",
+        sitePresent: true,
+        siteAccessible: true,
+        webPresenceKind: "official_site",
+        https: true,
+        title: "Garage Web",
+        metaDescription: "Garage local",
+        viewportPresent: true,
+        visibleContact: true
+      }
+    },
+    campaign
+  );
+  const thirdPartyOnly = scoreProspect(
+    {
+      name: "Garage Social Pantin",
+      city: "Pantin",
+      website: "https://www.facebook.com/garage-social",
+      evidence: ["shop=car_repair"],
+      webAudit: {
+        checkedAt: "2026-06-01T10:00:00.000Z",
+        sitePresent: false,
+        siteAccessible: true,
+        webPresenceKind: "third_party_only",
+        socialOrDirectoryOnly: true,
+        visibleSocial: true
+      }
+    },
+    campaign
+  );
+  const inaccessible = scoreProspect(
+    {
+      name: "Garage Casse Pantin",
+      city: "Pantin",
+      website: "https://garage-casse.example",
+      evidence: ["shop=car_repair"],
+      webAudit: {
+        checkedAt: "2026-06-01T10:00:00.000Z",
+        sitePresent: true,
+        siteAccessible: false,
+        webPresenceKind: "inaccessible",
+        httpStatus: 500
+      }
+    },
+    campaign
+  );
+
+  assert.equal(official.scoreBreakdown.webNeed.reasons.includes("Site web officiel deja identifie."), true);
+  assert.equal(thirdPartyOnly.scoreBreakdown.webNeed.score > official.scoreBreakdown.webNeed.score, true);
+  assert.equal(
+    thirdPartyOnly.scoreBreakdown.webNeed.reasons.some((reason) => reason.includes("Presence limitee")),
+    true
+  );
+  assert.equal(
+    inaccessible.scoreBreakdown.webNeed.reasons.some((reason) => reason.includes("casse")),
+    true
+  );
+  assert.equal(inaccessible.scoreBreakdown.webNeed.proofs.length > 0, true);
+  assert.equal(inaccessible.scoreBreakdown.webNeed.score <= 35, true);
+});
+
 test("score utilise le secteur configure", () => {
   const result = scoreProspect(
     {

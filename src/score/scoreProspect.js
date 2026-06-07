@@ -5,8 +5,11 @@ export function scoreProspect(prospect, campaign) {
   const sector = getCampaignSector(campaign);
   const baseReasons = [];
   const webNeedReasons = [];
+  const webNeedProofs = [];
   const commercialPotentialReasons = [];
+  const commercialPotentialProofs = [];
   const actionabilityReasons = [];
+  const actionabilityProofs = [];
   const reasons = [];
   const nameKey = normalizeKey(`${prospect.name} ${prospect.evidence?.join(" ")}`);
   const evidenceKey = normalizeKey((prospect.evidence || []).join(" "));
@@ -35,29 +38,63 @@ export function scoreProspect(prospect, campaign) {
     reasons.push("Zone geographique insuffisamment prouvee.");
   }
 
-  if (hasWebsiteProblemSignal(evidenceKey)) {
+  const webAudit = prospect.webAudit || null;
+  const webPresenceKind = webAudit?.webPresenceKind || legacyWebPresenceKind(prospect, {
+    sourceKey,
+    socialKey,
+    evidenceKey
+  });
+
+  if (webPresenceKind === "inaccessible" || hasWebsiteProblemSignal(evidenceKey)) {
     webNeed += 25;
     webNeedReasons.push("Site casse ou inaccessible.");
+    webNeedProofs.push(webProof("Site casse ou inaccessible", "problem", webAudit, prospect.website));
+  } else if (webPresenceKind === "third_party_only") {
+    webNeed += 20;
+    webNeedReasons.push("Presence limitee a Facebook, Instagram, Google Business ou annuaire.");
+    webNeedProofs.push(webProof("Presence web limitee a une plateforme tierce", "problem", webAudit, prospect.website));
+  } else if (webPresenceKind === "missing_official_site") {
+    webNeed += 30;
+    webNeedReasons.push("Aucun site web officiel identifie.");
+    webNeedProofs.push(webProof("Aucun site officiel identifie", "problem", webAudit, prospect.website));
   } else if (hasWeakWebsiteSignal(evidenceKey)) {
     webNeed += 15;
     webNeedReasons.push("Site date, non mobile ou peu exploitable.");
+    webNeedProofs.push(textProof("Site faible signale par les preuves", "warning", prospect.evidence));
   } else if (!prospect.website && hasSocialOrDirectorySignal({ sourceKey, socialKey, evidenceKey })) {
     webNeed += 20;
     webNeedReasons.push("Presence limitee a Facebook, Instagram, Google Business ou annuaire.");
+    webNeedProofs.push(textProof("Presence tierce probable", "uncertain", prospect.evidence));
   } else if (!prospect.website) {
     webNeed += 30;
-    webNeedReasons.push("Aucun site web public identifie.");
+    webNeedReasons.push("Aucun site web officiel identifie.");
+    webNeedProofs.push(textProof("Aucun site officiel dans les sources", "uncertain", prospect.evidence));
   } else {
-    webNeedReasons.push("Site web public deja identifie.");
+    webNeedReasons.push("Site web officiel deja identifie.");
+    webNeedProofs.push(webProof("Site officiel identifie", "ok", webAudit, prospect.website));
+  }
+  if (webAudit?.sitePresent && webAudit.siteAccessible) {
+    if (!webAudit.viewportPresent || !webAudit.metaDescriptionPresent) {
+      webNeed += 5;
+      webNeedReasons.push("Audit web leger: SEO/mobile perfectible.");
+      webNeedProofs.push(webProof("SEO/mobile perfectible", "warning", webAudit, prospect.website));
+    }
+    if (!webAudit.visibleContact && !webAudit.contactPageOrFormDetected) {
+      actionabilityContact -= 2;
+      actionabilityReasons.push("Audit web leger: canal de contact peu visible sur le site.");
+      actionabilityProofs.push(webProof("Canal de contact peu visible sur le site", "warning", webAudit, prospect.website));
+    }
   }
   if (!prospect.website && hasIncompleteSearchSignal(evidenceKey)) {
     webNeed -= hasVeryIncompleteSearchSignal(evidenceKey) ? 10 : 5;
     webNeedReasons.push("Absence de site incertaine ou recherche incomplete.");
+    webNeedProofs.push(textProof("Absence de site incertaine", "uncertain", prospect.evidence));
   }
 
   if (hasVisibleActivitySignal(prospect, evidenceKey)) {
     commercialPotential += 10;
     commercialPotentialReasons.push("Activite visible : avis, horaires, photos ou presence locale.");
+    commercialPotentialProofs.push(textProof("Activite visible dans les sources", "ok", prospect.evidence));
   }
   if (hasOfferSignal(evidenceKey)) {
     commercialPotential += 5;
@@ -83,14 +120,21 @@ export function scoreProspect(prospect, campaign) {
   if (prospect.phone) {
     actionabilityContact += 7;
     actionabilityReasons.push("Telephone public disponible.");
+    actionabilityProofs.push({ label: "Telephone public disponible", status: "ok", evidence: prospect.phone });
   }
   if (prospect.email) {
     actionabilityContact += 5;
     actionabilityReasons.push("Email public disponible.");
+    actionabilityProofs.push({ label: "Email public disponible", status: "ok", evidence: prospect.email });
   }
   if ((prospect.social || []).length || hasOtherContactChannelSignal(evidenceKey)) {
     actionabilityContact += 3;
     actionabilityReasons.push("Formulaire, reseau social actif ou autre canal exploitable.");
+    actionabilityProofs.push(textProof("Canal exploitable identifie", "ok", [
+      ...(prospect.social || []),
+      ...(webAudit?.exploitableContacts || []).map((contact) => contact.value),
+      ...(prospect.evidence || [])
+    ]));
   }
   if (!prospect.phone && !prospect.email && (prospect.social || []).length) {
     actionabilityContact -= 5;
@@ -99,6 +143,7 @@ export function scoreProspect(prospect, campaign) {
   if (!prospect.phone && !prospect.email && !(prospect.social || []).length) {
     actionabilityContact -= 10;
     actionabilityReasons.push("Aucun contact exploitable.");
+    actionabilityProofs.push(webProof("Aucun contact exploitable confirme", "problem", webAudit, prospect.website));
   }
 
   if (hasPrimarySourceSignal(prospect, sourceKey, evidenceKey)) {
@@ -146,16 +191,66 @@ export function scoreProspect(prospect, campaign) {
     subscores,
     scoreBreakdown: {
       base: { score: subscores.base, max: 15, reasons: baseReasons },
-      webNeed: { score: subscores.webNeed, max: 35, reasons: webNeedReasons },
+      webNeed: { score: subscores.webNeed, max: 35, reasons: webNeedReasons, proofs: webNeedProofs },
       commercialPotential: {
         score: subscores.commercialPotential,
         max: 25,
-        reasons: commercialPotentialReasons
+        reasons: commercialPotentialReasons,
+        proofs: commercialPotentialProofs
       },
-      actionability: { score: subscores.actionability, max: 25, reasons: actionabilityReasons }
+      actionability: {
+        score: subscores.actionability,
+        max: 25,
+        reasons: actionabilityReasons,
+        proofs: actionabilityProofs
+      }
     },
     reasons
   };
+}
+
+function legacyWebPresenceKind(prospect, { sourceKey, socialKey, evidenceKey }) {
+  if (prospect.website && hasSocialOrDirectorySignal({ sourceKey: "", socialKey: prospect.website, evidenceKey: "" })) {
+    return "third_party_only";
+  }
+  if (prospect.website) return "official_site";
+  if (hasSocialOrDirectorySignal({ sourceKey, socialKey, evidenceKey })) return "third_party_only";
+  return "missing_official_site";
+}
+
+function webProof(label, status, audit, website) {
+  return {
+    label,
+    status,
+    evidence: auditEvidence(audit, website),
+    sourceUrl: audit?.finalUrl || audit?.checkedUrl || website || "",
+    checkedAt: audit?.checkedAt || ""
+  };
+}
+
+function textProof(label, status, evidence = []) {
+  return {
+    label,
+    status,
+    evidence: (evidence || []).filter(Boolean).slice(0, 3).join(" | ") || "Incertitude explicite: preuve insuffisante.",
+    sourceUrl: "",
+    checkedAt: ""
+  };
+}
+
+function auditEvidence(audit, website) {
+  if (!audit) return website || "Incertitude explicite: audit web non disponible.";
+  if (audit.webPresenceKind === "third_party_only") return audit.finalUrl || audit.checkedUrl || website || "Plateforme tierce.";
+  if (audit.webPresenceKind === "missing_official_site") return "Aucun site officiel detecte dans les sources.";
+  const parts = [
+    audit.httpStatus ? `HTTP ${audit.httpStatus}` : null,
+    audit.https ? "HTTPS" : "sans HTTPS",
+    audit.title ? `title: ${audit.title}` : null,
+    audit.metaDescription ? "meta presente" : null,
+    audit.viewportPresent ? "viewport mobile" : "viewport absent",
+    audit.visibleContact || audit.contactPageOrFormDetected ? "contact visible" : "contact absent"
+  ].filter(Boolean);
+  return parts.join(" | ") || audit.error || website || "Audit web disponible.";
 }
 
 function clampScore(value, max) {

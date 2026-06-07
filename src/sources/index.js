@@ -26,7 +26,9 @@ export async function collectProspects(campaign, runtimeConfig, options = {}) {
     : await enrichWithWebsiteContacts(sourceRecords, {
         limit: options.websiteEnrichmentLimit ?? runtimeConfig.websiteEnrichmentLimit,
         timeoutMs:
-          options.websiteEnrichmentTimeoutMs ?? runtimeConfig.websiteEnrichmentTimeoutMs
+          options.websiteEnrichmentTimeoutMs ?? runtimeConfig.websiteEnrichmentTimeoutMs,
+        cacheDir: runtimeConfig.cacheDir,
+        force: Boolean(options.forceWebsiteEnrichment)
       });
 
   return { records, errors };

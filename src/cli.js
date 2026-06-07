@@ -6,6 +6,7 @@ import { recalculateScoringV2 } from "./migrations/recalculateScoringV2.js";
 import { openDatabase, getCampaignResults } from "./storage/database.js";
 import { exportCampaign } from "./exports/exportCampaign.js";
 import { startNightlyWorker } from "./scheduler/nightly.js";
+import { backfillWebAudits } from "./web-audit/backfill.js";
 
 const args = process.argv.slice(2);
 
@@ -61,12 +62,36 @@ async function main() {
     return;
   }
 
+  if (scope === "web-audit" && command === "backfill") {
+    const db = await openDatabase(runtimeConfig.dbPath);
+    try {
+      const stats = await backfillWebAudits(db, campaign, runtimeConfig, {
+        limit: Number(optionValue("--limit") || 25),
+        force: hasFlag("--force"),
+        dryRun: hasFlag("--dry-run")
+      });
+      console.log(`Prospects traites: ${stats.processed}`);
+      console.log(`Mis a jour: ${stats.updated}`);
+      console.log(`Ignores: ${stats.skipped}`);
+      console.log(`Erreurs: ${stats.errors}`);
+      console.log(`Cache hits: ${stats.cacheHits}`);
+      console.log(`Prospects affectes: ${stats.affectedProspectIds.join(", ") || "-"}`);
+    } finally {
+      db.close();
+    }
+    return;
+  }
+
   printHelp();
 }
 
 function optionValue(name) {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : null;
+}
+
+function hasFlag(name) {
+  return args.includes(name);
 }
 
 function printHelp() {
@@ -77,5 +102,6 @@ Commandes:
   prospector campaign nightly [--campaign path]
   prospector export [--campaign path]
   prospector scoring recalculate-v2 [--campaign path]
+  prospector web-audit backfill --limit N [--campaign path] [--force] [--dry-run]
 `);
 }
