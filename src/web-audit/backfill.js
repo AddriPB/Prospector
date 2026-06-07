@@ -29,7 +29,7 @@ export async function backfillWebAudits(connection, campaign, runtimeConfig, opt
     stats.processed += 1;
     try {
       const existingAudit = safeJsonParse(row.web_audit_json, {});
-      if (!force && existingAudit?.checkedAt) {
+      if (!force && existingAudit?.checkedAt && existingAudit?.webPresenceKind) {
         stats.skipped += 1;
         continue;
       }
@@ -79,7 +79,16 @@ function getBackfillCandidates(db, { campaignIds, limit }) {
      LEFT JOIN campaign_prospects cp ON cp.prospect_id = p.id
      ${campaignFilter}
      GROUP BY p.id
-     ORDER BY best_score DESC, first_seen_at DESC, p.id ASC
+     ORDER BY
+       CASE
+         WHEN p.web_audit_json IS NULL OR p.web_audit_json = '' OR p.web_audit_json = '{}'
+           OR instr(p.web_audit_json, '"webPresenceKind"') = 0
+         THEN 0
+         ELSE 1
+       END ASC,
+       best_score DESC,
+       first_seen_at DESC,
+       p.id ASC
      LIMIT ?`,
     [...campaignIds, limit]
   );
