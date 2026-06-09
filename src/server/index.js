@@ -286,9 +286,11 @@ export async function startServer(campaign, runtimeConfig) {
     }
   });
 
-  app.use(express.static(path.join(projectRoot, "dist")));
+  const distDir = path.join(projectRoot, "dist");
+  app.use("/Prospector", express.static(distDir));
+  app.use(express.static(distDir));
   app.use((_req, res) => {
-    res.sendFile(path.join(projectRoot, "dist", "index.html"));
+    res.sendFile(path.join(distDir, "index.html"));
   });
 
   app.use((error, _req, res, _next) => {
