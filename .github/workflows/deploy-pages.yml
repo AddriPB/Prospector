@@ -28,7 +28,7 @@ jobs:
       - run: npm test
       - run: npm run build
         env:
-          VITE_PUBLIC_API_BASE: ${{ vars.VITE_PUBLIC_API_BASE || 'https://singh-reserved-odds-legislative.trycloudflare.com' }}
+          VITE_PUBLIC_API_BASE: ${{ vars.VITE_PUBLIC_API_BASE }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
